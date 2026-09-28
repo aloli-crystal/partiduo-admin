@@ -69,9 +69,13 @@ jobs:
         with:
           crystal: 1.19.1
       - name: Bibliothèques de compilation et outils PostgreSQL
+        # pg_dump refuse un serveur plus récent que lui : les outils clients
+        # doivent être en version 18 comme le service (dépôt PGDG).
         run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends libyaml-dev libssl-dev libgmp-dev libxml2-dev libpcre2-dev lld postgresql-client
+          sudo apt-get install -y --no-install-recommends postgresql-common
+          sudo /usr/share/postgresql-common/pgdg/apt.postgresql.org.sh -y
+          sudo apt-get install -y --no-install-recommends libyaml-dev libssl-dev libgmp-dev libxml2-dev libpcre2-dev lld postgresql-client-18
+          pg_dump --version
       - name: Dépendances path (shards maison non publiés)
         run: scripts/ci-checkout-deps.sh
       - name: Shards

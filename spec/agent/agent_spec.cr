@@ -41,7 +41,7 @@ describe PartiduoAgent do
     admin.push(1_i64, "instance.create", params)
     run_one(admin, admin.config)
     report = admin.finished[1_i64]
-    report["ok"].as_bool.should be_true
+    report["ok"].as_bool.should be_true, report.to_json
     report["result"]["database"].should eq("partiduo_adm_demo_fr")
     report["result"]["invitation_url"].as_s.should contain("/invitation/")
     report["result"]["certificate"]["issued"].as_bool.should be_false
@@ -197,7 +197,7 @@ describe PartiduoAgent::LocalSystem do
     admin.push(20_i64, "backup.run", params)
     run_one(admin, config)
     backup = admin.finished[20_i64]
-    backup["ok"].as_bool.should be_true
+    backup["ok"].as_bool.should be_true, backup.to_json
     path = backup["result"]["path"].as_s
     File.exists?(path).should be_true
     File.exists?(backup["result"]["media_path"].as_s).should be_true
