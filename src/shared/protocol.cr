@@ -51,12 +51,38 @@ module PartiduoAdmin
     # Code d'extension (ADR-003) : même règle que `partiduo-provision`.
     CODE = /\A[a-z][a-z0-9_]*\z/
 
+    # Version publiée de partiduo-app (`0.2.0`, `0.2.0-rc.1`) : elle nomme un
+    # répertoire de `releases_dir`, jamais un chemin (ni `/` ni `..`).
+    VERSION = /\A\d+\.\d+\.\d+(?:[-.][0-9A-Za-z]+)*\z/
+
+    # Domaine des dossiers d'un serveur : même règle que `partiduo-provision`.
+    DOMAIN = /\A[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+\z/
+
+    def self.valid_domain?(domain : String) : Bool
+      DOMAIN.matches?(domain)
+    end
+
+    def self.valid_version?(version : String) : Bool
+      VERSION.matches?(version)
+    end
+
     def self.valid_kind?(kind : String) : Bool
       KINDS.includes?(kind)
     end
 
+    # Sous-domaines réservés : l'administration elle-même (`admin.<domaine>`,
+    # base `partiduo_admin`, ADR-008 D1) et le site public.
+    RESERVED_SLUGS = %w[admin www]
+
+    # Préfixe réservé aux bases temporaires des restaurations test
+    # (`partiduo_rt_<dossier>_<tâche>`, `partiduo_adm_rt_…` en mode local) :
+    # un dossier `rt-x-5` aurait la base de la restauration test du dossier
+    # `x`, tâche 5, que l'exécutant supprime.
+    RESERVED_PREFIX = "rt-"
+
     def self.valid_slug?(slug : String) : Bool
-      SLUG.matches?(slug) && !slug.ends_with?('-')
+      SLUG.matches?(slug) && !slug.ends_with?('-') && !RESERVED_SLUGS.includes?(slug) &&
+        !slug.starts_with?(RESERVED_PREFIX)
     end
 
     # Nom de la base d'un dossier. Le mode local de l'exécutant préfixe

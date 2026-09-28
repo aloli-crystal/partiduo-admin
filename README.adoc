@@ -76,8 +76,15 @@ ni vhost, ni systemd, ni Let's Encrypt — les fichiers de service sont
 produits dans `--work-dir`, l'arrêt d'un service est un fichier témoin.
 
 `production`::
-Serveur d'hébergement : `sudo -n` limité par `deploy/partiduo-agent.sudoers`,
-instance appelée sous son compte système avec son fichier d'environnement.
+Serveur d'hébergement : `sudo -n` limité par `deploy/partiduo-agent.sudoers` à
+deux scripts enveloppes possédés par root (`deploy/libexec/`), qui valident
+leurs arguments et lisent `/etc/partiduo-agent/helpers.conf`
+(`deploy/helpers.conf.example`) : `partiduo-agent-root` (installation et
+retrait d'une instance, service, certificat) et `partiduo-agent-instance`
+(interface d'instance, `partiduo-provision`, bases, sauvegardes, version,
+sous le compte des instances, propriétaire des bases). `--domain` est
+obligatoire : l'hôte et la base de chaque tâche sont recalculés depuis le
+sous-domaine (D-AFN-002, D-AFN-004, D-AFN-005).
 
 == Développement
 
@@ -109,7 +116,24 @@ crystal build lib/ameba/bin/ameba.cr -o bin/ameba && bin/ameba
 == Exploitation
 
 `deploy/` : unités systemd de l'application, de la planification (minuteur
-de 15 minutes) et de l'exécutant, et règles sudoers de l'exécutant.
+de 15 minutes) et de l'exécutant, règles sudoers de l'exécutant et ses
+scripts enveloppes.
+
+Installation de l'exécutant sur un serveur (en root) :
+
+[source,sh]
+----
+useradd --system partiduo-agent
+install -d -o root -g root -m 755 /usr/local/libexec/partiduo-agent /etc/partiduo-agent
+install -o root -g root -m 755 deploy/libexec/partiduo-agent-* /usr/local/libexec/partiduo-agent/
+cp -R ../partiduo-app/deploy/templates /usr/local/libexec/partiduo-agent/templates   # root, 0644
+install -o root -g root -m 644 deploy/helpers.conf.example /etc/partiduo-agent/helpers.conf   # à adapter
+install -o root -g root -m 440 deploy/partiduo-agent.sudoers /etc/sudoers.d/partiduo-agent && visudo -c
+install -d -o partiduo -g partiduo-agent -m 2770 /var/backups/partiduo
+install -d -o partiduo -g partiduo -m 750 /var/lib/partiduo /var/lib/partiduo/stage
+install -d -o partiduo-agent -g partiduo-agent -m 700 /var/lib/partiduo-agent
+sudo -u postgres createuser --createdb --no-superuser partiduo
+----
 Variables : `DATABASE_URL`, `MARTEN_SECRET_KEY`, `PARTIDUO_DOMAIN`
 (`partiduo.app`), `PARTIDUO_ADMIN_HOST`, `PARTIDUO_ADMIN_URL`,
 `PARTIDUO_ADMIN_MAIL_FROM`, `PARTIDUO_ADMIN_ALERTS_TO`,

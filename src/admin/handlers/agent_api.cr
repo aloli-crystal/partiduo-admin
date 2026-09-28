@@ -97,7 +97,13 @@ module PartiduoAdmin
       ok = data["ok"]?.try(&.as_bool?) || false
       result = data["result"]? || JSON::Any.new({} of String => JSON::Any)
       lines = data["lines"]?.try(&.as_a?).try(&.map(&.to_s)) || [] of String
-      Tasks.finish(task, ok, result, data["error"]?.try(&.as_s?) || "", lines.first(1000), Config.now)
+      begin
+        Tasks.finish(task, ok, result, data["error"]?.try(&.as_s?) || "", lines.first(1000), Config.now)
+      rescue Tasks::Effects::DeliveryError
+        # Rien n'est enregistré : l'exécutant garde le lien et rendra compte
+        # de nouveau à la reprise de la tâche (D-AFN-008).
+        return error(503, "delivery_failed")
+      end
       json({"ok" => true, "state" => task.state}.to_json)
     end
   end

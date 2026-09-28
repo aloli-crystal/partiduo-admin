@@ -178,7 +178,7 @@ nl:
       delete: "Definitieve verwijdering"
       delete_help: "Alleen na de wettelijke bewaartermijn, met dubbele goedkeuring."
       access: "Toegangsherstel"
-      access_help: "Verstuurt de uitnodiging van de dossierbeheerder opnieuw als de onderneming alle toegang verloor. Dubbele goedkeuring."
+      access_help: "Verstuurt opnieuw de uitnodiging van een bestaande beheerder van het dossier als de onderneming alle toegang kwijt is (adres van een beheerdersaccount van de instantie; er wordt geen account aangemaakt). Dubbele goedkeuring."
       test_restore: "Testherstel"
     restore:
       date: "Datum"
@@ -288,6 +288,7 @@ nl:
         agent_silent: "uitvoerder stil"
         test_restore_failed: "testherstel mislukt"
         wave_failed: "update-golf gestopt"
+        mail_failed: "uitnodigingsmail niet verzonden"
     quota:
       title: "Let's Encrypt-quotum"
       help: "50 certificaten per week voor het domein; daarboven kan geen dossier worden aangemaakt."

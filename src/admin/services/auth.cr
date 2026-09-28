@@ -412,7 +412,11 @@ module PartiduoAdmin
         Audit.log(user, "auth.second_factor", outcome: "fail", target: user, ip: ip)
         return LoginResult.new(error: user.locked? ? "admin.errors.login.locked" : "admin.errors.login.code")
       end
-      Challenges.consume(PURPOSE_PENDING, handle, now)
+      # Poignée consommée une seule fois : de deux requêtes concurrentes, une
+      # seule ouvre une session (D-AFN-011).
+      if Challenges.consume(PURPOSE_PENDING, handle, now).nil?
+        return LoginResult.new(error: "admin.errors.login.expired")
+      end
       Throttle.record_success(user)
       Audit.log(user, "auth.login", target: user, detail: {"level" => TWO_FACTOR.to_s, "method" => method}, ip: ip)
       LoginResult.new(opened: Sessions.open(user, TWO_FACTOR, method, ip, user_agent, now))

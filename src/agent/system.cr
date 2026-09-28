@@ -73,7 +73,11 @@ module PartiduoAgent
     abstract def database_exists?(database : String) : Bool
     abstract def createdb(database : String) : Nil
     abstract def dropdb(database : String) : Nil
-    abstract def provision(slug : String, params : JSON::Any, database : String, skip_createdb : Bool) : String
+    abstract def provision(slug : String, domain : String, params : JSON::Any, database : String, skip_createdb : Bool) : String
+    # Fichiers de service d'une instance dont la base est déjà remplie
+    # (restauration dans une instance neuve) : `partiduo-provision
+    # --files-only`, nouveau port et nouvelle clé secrète.
+    abstract def provision_files(slug : String, domain : String, params : JSON::Any, database : String) : String
     abstract def install_instance(slug : String, host : String) : Bool
     abstract def instance(slug : String, action : String, args : Array(String), version : String? = nil,
                           database : String? = nil) : InstanceReply
@@ -83,8 +87,11 @@ module PartiduoAgent
     abstract def pg_dump(database : String, path : String) : Nil
     abstract def pg_restore(database : String, path : String) : Nil
     abstract def pg_restore_list?(path : String) : Bool
-    abstract def tar_create(root : String, list_file : String, path : String) : Nil
-    abstract def tar_extract(path : String, root : String) : Nil
+    abstract def tar_create(slug : String, root : String, list_file : String, path : String) : Nil
+    # Pièces jointes d'une sauvegarde remises sous le stockage de l'instance.
+    abstract def tar_extract(slug : String, path : String) : Nil
+    # Union de listes de pièces jointes (relevées avant et après `pg_dump`).
+    abstract def merge_lists(sources : Array(String), destination : String) : Nil
     abstract def tar_list?(path : String) : Bool
     abstract def sha256(path : String) : String
     abstract def size(path : String) : Int64
@@ -94,7 +101,6 @@ module PartiduoAgent
     abstract def disk(path : String) : {Int64, Int64}
     abstract def cert_expiry(host : String) : Time?
     abstract def remove_instance(slug : String, host : String) : Nil
-    abstract def render_instance(slug : String, host : String, database : String, params : JSON::Any) : Nil
 
     # Un chemin de sauvegarde n'est accepté que sous `backup_dir` : aucune
     # tâche ne fait effacer un fichier ailleurs.
@@ -108,6 +114,12 @@ module PartiduoAgent
 
   # À blanc : état simulé en mémoire, chaque geste écrit au journal.
   class DrySystem < System
+    # Pièces simulées et leurs dépendances (forme de `status`).
+    DRY_CATALOG = {
+      "ACCOUNTING" => [] of String, "INVOICING" => [] of String, "ANALYTIC" => ["ACCOUNTING"],
+      "STOCK" => ["ACCOUNTING|INVOICING"], "FOLLOWUP" => ["ACCOUNTING|INVOICING"], "EINVOICING" => ["INVOICING"],
+    }
+
     getter databases = Set(String).new
     getter provisioned = Set(String).new
     getter stopped = Set(String).new
@@ -139,12 +151,17 @@ module PartiduoAgent
       databases.delete(database)
     end
 
-    def provision(slug : String, params : JSON::Any, database : String, skip_createdb : Bool) : String
+    def provision(slug : String, domain : String, params : JSON::Any, database : String, skip_createdb : Bool) : String
       op("partiduo-provision", "#{slug} #{database}")
       databases << database
       provisioned << database
       releases[slug] = params["version"]?.try(&.as_s?).presence || "0.1.0"
-      "== Instance #{slug} provisionnée.\nInvitation : https://#{params["host"]?.try(&.as_s?)}/invitation/DRYRUNTOKEN\n"
+      "== Instance #{slug} provisionnée.\nInvitation : https://#{slug}.#{domain}/invitation/DRYRUNTOKEN\n"
+    end
+
+    def provision_files(slug : String, domain : String, params : JSON::Any, database : String) : String
+      op("partiduo-provision --files-only", "#{slug} #{database}")
+      "== Instance #{slug} provisionnée.\n"
     end
 
     def install_instance(slug : String, host : String) : Bool
@@ -169,7 +186,8 @@ module PartiduoAgent
       when "version" then {"version" => version, "contract" => "1.0.0"}
       when "status"
         {"version" => version, "contract" => "1.0.0", "provisioned" => provisioned.includes?(db),
-         "read_only" => {"active" => read_only.includes?(db)}, "migrations" => {"applied" => 10, "pending" => 0}}
+         "read_only" => {"active" => read_only.includes?(db)}, "migrations" => {"applied" => 10, "pending" => 0},
+         "modules" => DRY_CATALOG.map { |code, depends| {"code" => code, "depends_on" => depends} }}
       when "read-only"
         args.first? == "on" ? read_only << db : read_only.delete(db)
         {"read_only" => {"active" => read_only.includes?(db)}, "restart_required" => false}
@@ -216,13 +234,17 @@ module PartiduoAgent
       files.has_key?(path) || true
     end
 
-    def tar_create(root : String, list_file : String, path : String) : Nil
+    def tar_create(slug : String, root : String, list_file : String, path : String) : Nil
       op("tar", path)
       files[path] = 512_i64
     end
 
-    def tar_extract(path : String, root : String) : Nil
-      op("tar -x", "#{path} #{root}")
+    def tar_extract(slug : String, path : String) : Nil
+      op("tar -x", "#{path} #{slug}")
+    end
+
+    def merge_lists(sources : Array(String), destination : String) : Nil
+      op("listes", destination)
     end
 
     def tar_list?(path : String) : Bool
@@ -242,8 +264,11 @@ module PartiduoAgent
       files.has_key?(path)
     end
 
+    # Même garde-fou qu'en production : un essai à blanc refuse ce que le
+    # serveur refuserait.
     def remove(path : String) : Nil
-      op("rm", path)
+      full = guard_backup_path!(path)
+      op("rm", full)
       files.delete(path)
     end
 
@@ -262,10 +287,6 @@ module PartiduoAgent
       op("retrait", host)
       stopped << slug
     end
-
-    def render_instance(slug : String, host : String, database : String, params : JSON::Any) : Nil
-      op("fichiers de service", host)
-    end
   end
 
   # Mode local : vraies bases `partiduo_adm_*` et vrais outils PostgreSQL,
@@ -273,6 +294,9 @@ module PartiduoAgent
   # produits dans `work_dir`, et l'arrêt d'un service est un fichier témoin.
   class LocalSystem < System
     DATABASE = /\A[a-z_][a-z0-9_]{0,62}\z/
+
+    # Base de partiduo-admin (ADR-008 D1).
+    ADMIN_DATABASE = "partiduo_admin"
 
     def instances_dir : String
       File.join(config.work_dir, "instances")
@@ -289,6 +313,8 @@ module PartiduoAgent
       unless database.starts_with?(prefix)
         raise StepError.new("base refusée (#{prefix}* seulement) : #{database}", "usage")
       end
+      # La base de l'administration elle-même n'est jamais celle d'un dossier.
+      raise StepError.new("base refusée : #{database}", "usage") if database == ADMIN_DATABASE
     end
 
     def pg_env : Hash(String, String)
@@ -328,28 +354,55 @@ module PartiduoAgent
       run!(["dropdb", "--if-exists", database], pg_env)
     end
 
-    def provision(slug : String, params : JSON::Any, database : String, skip_createdb : Bool) : String
+    def provision(slug : String, domain : String, params : JSON::Any, database : String, skip_createdb : Bool) : String
       guard_database!(database)
-      argv = [config.provision, "--manage", config.manage, "--name", params["name"].as_s, "--regime", params["regime"].as_s,
-              "--locale", params["locale"]?.try(&.as_s?).presence || "fr",
-              "--admin-email", params["admin_email"].as_s,
-              "--modules", params["modules"].as_a.map(&.as_s).join(','),
-              "--domain", params["domain"].as_s, "--database", database, "--pg-socket", config.pg_socket,
-              "--output-dir", instances_dir]
-      extensions = params["extensions"]?.try(&.as_a.map(&.as_s)) || [] of String
-      argv += ["--with", extensions.join(',')] unless extensions.empty?
-      if siren = params["siren"]?.try(&.as_s?).presence
-        argv += ["--siren", siren]
-      end
-      if vat = params["vat"]?.try(&.as_s?).presence
-        argv += ["--vat", vat]
-      end
+      argv = [config.provision, "--manage", config.manage, "--domain", domain, "--database", database,
+              "--pg-socket", config.pg_socket, "--output-dir", instances_dir] + company_options(params) + module_options(params)
       argv += ["--acme-email", config.acme_email] unless config.acme_email.empty?
       argv << "--acme-staging" if config.acme_staging
       argv << "--skip-createdb" if skip_createdb
       argv << slug
       Dir.mkdir_p(instances_dir)
       run!(argv, pg_env)
+    end
+
+    def provision_files(slug : String, domain : String, params : JSON::Any, database : String) : String
+      guard_database!(database)
+      argv = [config.provision, "--files-only", "--manage", config.manage, "--domain", domain, "--database", database,
+              "--pg-socket", config.pg_socket, "--output-dir", instances_dir] + module_options(params)
+      argv += ["--locale", locale(params), slug]
+      Dir.mkdir_p(instances_dir)
+      run!(argv, pg_env)
+    end
+
+    # Société : options de `partiduo-provision` (valeurs passées telles
+    # quelles, en arguments séparés : jamais par un shell).
+    def company_options(params : JSON::Any) : Array(String)
+      options = ["--name", params["name"]?.try(&.as_s?) || "", "--regime", params["regime"]?.try(&.as_s?) || "",
+                 "--locale", locale(params), "--admin-email", params["admin_email"]?.try(&.as_s?) || ""]
+      if siren = params["siren"]?.try(&.as_s?).presence
+        options += ["--siren", siren]
+      end
+      if vat = params["vat"]?.try(&.as_s?).presence
+        options += ["--vat", vat]
+      end
+      options
+    end
+
+    def module_options(params : JSON::Any) : Array(String)
+      modules = params["modules"]?.try(&.as_a?).try(&.map(&.to_s)) || [] of String
+      extensions = params["extensions"]?.try(&.as_a?).try(&.map(&.to_s)) || [] of String
+      unless (modules + extensions).all? { |code| PartiduoAdmin::Protocol::CODE.matches?(code) }
+        raise StepError.new("code de module ou d'extension invalide", "usage")
+      end
+      options = ["--modules", modules.join(',')]
+      options += ["--with", extensions.join(',')] unless extensions.empty?
+      options
+    end
+
+    def locale(params : JSON::Any) : String
+      value = params["locale"]?.try(&.as_s?).presence || "fr"
+      %w[fr en nl].includes?(value) ? value : "fr"
     end
 
     # Mode local : rien n'est installé ; les fichiers restent dans work_dir.
@@ -449,7 +502,7 @@ module PartiduoAgent
       code == 0
     end
 
-    def tar_create(root : String, list_file : String, path : String) : Nil
+    def tar_create(slug : String, root : String, list_file : String, path : String) : Nil
       Dir.mkdir_p(File.dirname(path))
       if !Dir.exists?(root) || File.size(list_file).zero?
         # Aucune pièce jointe : archive vide, pour une sauvegarde homogène.
@@ -459,9 +512,17 @@ module PartiduoAgent
       end
     end
 
-    def tar_extract(path : String, root : String) : Nil
+    # Mode local : stockage de l'instance sous work_dir (voir `instance`).
+    def tar_extract(slug : String, path : String) : Nil
+      root = File.join(instance_dir(slug), "media")
       Dir.mkdir_p(root)
-      run!(["tar", "-C", root, "-xzf", path])
+      run!(["tar", "-C", root, "-xzf", guard_backup_path!(path)])
+    end
+
+    def merge_lists(sources : Array(String), destination : String) : Nil
+      lines = sources.flat_map { |source| File.exists?(source) ? File.read_lines(source) : [] of String }
+      File.write(guard_backup_path!(destination), lines.reject(&.empty?).uniq!.sort!.join { |line| "#{line}\n" })
+      sources.each { |source| File.delete(source) if File.exists?(source) }
     end
 
     def tar_list?(path : String) : Bool
@@ -508,59 +569,124 @@ module PartiduoAgent
       log("mode local : fichiers de #{slug} retirés de #{instance_dir(slug)}")
       FileUtils.rm_rf(instance_dir(slug))
     end
-
-    def render_instance(slug : String, host : String, database : String, params : JSON::Any) : Nil
-      guard_database!(database)
-      Dir.mkdir_p(instance_dir(slug))
-      source = instance_env(params["slug"].as_s)
-      source["DATABASE_URL"] = "postgres:///#{database}?host=#{config.pg_socket}"
-      source["PARTIDUO_HOST"] = host if source.has_key?("PARTIDUO_HOST")
-      File.write(File.join(instance_dir(slug), "#{slug}.env"), source.map { |key, value| "#{key}=#{value}" }.join("\n") + "\n")
-      log("mode local : fichier d'environnement de #{slug} produit dans #{instance_dir(slug)}")
-    end
   end
 
-  # Production : services systemd, vhosts nginx et certificats par
-  # `sudo -n` (règles sudoers limitées, voir README), instance appelée sous
-  # son compte système avec son fichier d'environnement.
+  # Production : tout geste privilégié passe par deux scripts enveloppes
+  # possédés par root (`deploy/libexec/`, D-AFN-002), seuls permis par
+  # sudoers et qui valident eux-mêmes leurs arguments :
+  #
+  # * `partiduo-agent-root` (en root) : installation et retrait d'une
+  #   instance, démarrage et arrêt de son service, certificat ;
+  # * `partiduo-agent-instance` (sous le compte des instances) : interface
+  #   d'instance, `partiduo-provision`, bases (création, suppression,
+  #   `pg_dump`, `pg_restore`), version, pièces jointes.
+  #
+  # Les bases et leurs objets appartiennent ainsi au rôle de l'instance
+  # (`partiduo`), celui qui les fait tourner (D-AFN-005). L'exécutant ne
+  # passe que des valeurs : sous-domaine, nom de base, version, chemins sous
+  # le répertoire des sauvegardes ; les enveloppes calculent le reste de
+  # leur propre configuration (`/etc/partiduo-agent/helpers.conf`).
   class ProductionSystem < LocalSystem
+    def root_helper : String
+      File.join(config.helpers_dir, "partiduo-agent-root")
+    end
+
+    def instance_helper : String
+      File.join(config.helpers_dir, "partiduo-agent-instance")
+    end
+
+    def as_root(args : Array(String)) : Array(String)
+      ["sudo", "-n", root_helper] + args
+    end
+
+    def as_instance(args : Array(String)) : Array(String)
+      ["sudo", "-n", "-u", config.system_user, instance_helper] + args
+    end
+
     def instances_dir : String
       File.join(config.state_dir, "instances")
     end
 
+    private def guard_slug!(slug : String) : Nil
+      raise StepError.new("sous-domaine invalide : #{slug}", "usage") unless PartiduoAdmin::Protocol.valid_slug?(slug)
+    end
+
+    def database_exists?(database : String) : Bool
+      guard_database!(database)
+      code, _, errors = run(as_instance(["db-exists", database]), quiet: true)
+      return true if code == 0
+      return false if code == 3
+      raise StepError.new("db-exists (code #{code}) : #{errors.strip[0, 300]?}")
+    end
+
+    def createdb(database : String) : Nil
+      guard_database!(database)
+      run!(as_instance(["createdb", database]))
+    end
+
+    def dropdb(database : String) : Nil
+      guard_database!(database)
+      run!(as_instance(["dropdb", database]))
+    end
+
+    # `partiduo-provision` sous le compte des instances : domaine, rôle
+    # propriétaire, socket, racines et gabarits viennent de la
+    # configuration de l'enveloppe ; la base est celle du sous-domaine.
+    def provision(slug : String, domain : String, params : JSON::Any, database : String, skip_createdb : Bool) : String
+      guard_slug!(slug)
+      guard_database!(database)
+      raise StepError.new("base refusée : #{database}", "usage") unless database == database_for(slug)
+      argv = ["provision", slug] + company_options(params) + module_options(params) + release_option(params)
+      argv << "--skip-createdb" if skip_createdb
+      run!(as_instance(argv))
+    end
+
+    def provision_files(slug : String, domain : String, params : JSON::Any, database : String) : String
+      guard_slug!(slug)
+      raise StepError.new("base refusée : #{database}", "usage") unless database == database_for(slug)
+      run!(as_instance(["provision", slug, "--files-only", "--locale", locale(params)] + module_options(params) +
+                       release_option(params)))
+    end
+
+    private def release_option(params : JSON::Any) : Array(String)
+      version = params["version"]?.try(&.as_s?) || ""
+      PartiduoAdmin::Protocol.valid_version?(version) ? ["--release", version] : [] of String
+    end
+
     def install_instance(slug : String, host : String) : Bool
+      guard_slug!(slug)
       before = cert_exists?(host)
-      run!(["sudo", "-n", "sh", "INSTALL.txt"], chdir: instance_dir(slug))
+      run!(as_root(["install", slug]))
       !before && cert_exists?(host) && !config.acme_staging
     end
 
     def cert_exists?(host : String) : Bool
-      code, _, _ = run(["sudo", "-n", "test", "-f", "/etc/letsencrypt/live/#{host}/fullchain.pem"], quiet: true)
+      code, _, _ = run(as_root(["cert", host, "exists"]), quiet: true)
       code == 0
     end
 
     def instance(slug : String, action : String, args : Array(String), version : String? = nil,
                  database : String? = nil) : InstanceReply
-      release = File.join(config.install_root, "instances", slug, "release", "bin", "partiduo-manage")
-      manage = version ? File.join(config.releases_dir, version, "bin", "partiduo-manage") : release
-      override = database ? "DATABASE_URL=postgres:///#{database}?host=#{config.pg_socket} " : ""
-      script = %(set -a && . "$1" && set +a && shift && exec env #{override}"$@")
-      argv = ["sudo", "-n", "-u", config.system_user, "sh", "-c", script, "sh",
-              File.join(config.etc_dir, "#{slug}.env"), manage, "instance", action] + args
+      guard_slug!(slug)
+      guard_database!(database) if database
+      if version && !PartiduoAdmin::Protocol.valid_version?(version)
+        raise StepError.new("version invalide : #{version}", "usage")
+      end
+      argv = as_instance(["cli", slug, database || "-", version || "-", action] + args)
       code, output, errors = run(argv)
       InstanceReply.new(code, JSON.parse(reply_line(output, errors)))
     end
 
     def service(slug : String, command : String) : String
-      unit = "partiduo-#{slug}.service"
-      run!(["sudo", "-n", "systemctl", command, unit]) unless command == "status"
-      code, _, _ = run(["systemctl", "is-active", "--quiet", unit], quiet: true)
+      guard_slug!(slug)
+      run!(as_root(["service", slug, command])) unless command == "status"
+      code, _, _ = run(["systemctl", "is-active", "--quiet", "partiduo-#{slug}.service"], quiet: true)
       code == 0 ? "running" : "stopped"
     end
 
     def switch_release(slug : String, version : String) : Nil
-      run!(["sudo", "-n", "-u", config.system_user, "ln", "-sfn", File.join(config.releases_dir, version),
-            File.join(config.install_root, "instances", slug, "release")])
+      guard_slug!(slug)
+      run!(as_instance(["release", slug, version]))
     end
 
     def current_release(slug : String) : String?
@@ -569,9 +695,38 @@ module PartiduoAgent
       nil
     end
 
+    def pg_dump(database : String, path : String) : Nil
+      guard_database!(database)
+      run!(as_instance(["dump", database, guard_backup_path!(path)]))
+    end
+
+    def pg_restore(database : String, path : String) : Nil
+      guard_database!(database)
+      run!(as_instance(["restore", database, guard_backup_path!(path)]))
+    end
+
+    # Répertoire de sauvegarde d'un dossier, créé par l'enveloppe (groupe de
+    # l'exécutant, écriture pour les deux comptes).
+    def mkdir(path : String) : Nil
+      slug = File.basename(path)
+      unless File.expand_path(path) == File.expand_path(backup_root(slug))
+        raise StepError.new("répertoire refusé : #{path}", "usage")
+      end
+      guard_slug!(slug)
+      run!(as_instance(["backup-dir", slug]))
+    end
+
+    def tar_create(slug : String, root : String, list_file : String, path : String) : Nil
+      run!(as_instance(["media-archive", slug, guard_backup_path!(list_file), guard_backup_path!(path)]))
+    end
+
+    def tar_extract(slug : String, path : String) : Nil
+      run!(as_instance(["media-restore", slug, guard_backup_path!(path)]))
+    end
+
     def cert_expiry(host : String) : Time?
-      code, output, _ = run(["sudo", "-n", "openssl", "x509", "-enddate", "-noout", "-in",
-                             "/etc/letsencrypt/live/#{host}/cert.pem"], quiet: true)
+      return if host.empty?
+      code, output, _ = run(as_root(["cert", host, "enddate"]), quiet: true)
       return unless code == 0
       Time.parse(output.strip.sub("notAfter=", ""), "%b %e %H:%M:%S %Y %Z", Time::Location::UTC)
     rescue Time::Format::Error
@@ -579,28 +734,8 @@ module PartiduoAgent
     end
 
     def remove_instance(slug : String, host : String) : Nil
-      unit = "partiduo-#{slug}"
-      run(["sudo", "-n", "systemctl", "disable", "--now", "#{unit}.service"])
-      run!(["sudo", "-n", "rm", "-f", "/etc/systemd/system/#{unit}.service", "/etc/nginx/sites-enabled/#{unit}.conf",
-            "/etc/nginx/sites-available/#{unit}.conf", File.join(config.etc_dir, "#{slug}.env")])
-      run(["sudo", "-n", "certbot", "delete", "--cert-name", host, "--non-interactive"])
-      run!(["sudo", "-n", "systemctl", "daemon-reload"])
-      run(["sudo", "-n", "systemctl", "reload", "nginx"])
-    end
-
-    # Instance neuve restaurée : fichier d'environnement dérivé de celui du
-    # dossier source, installé par les mêmes gestes que partiduo-provision.
-    def render_instance(slug : String, host : String, database : String, params : JSON::Any) : Nil
-      Dir.mkdir_p(instance_dir(slug))
-      _, source, _ = run(["sudo", "-n", "cat", File.join(config.etc_dir, "#{params["slug"].as_s}.env")], quiet: true)
-      env = source.lines.map do |line|
-        case line
-        when .starts_with?("DATABASE_URL=") then "DATABASE_URL=postgres:///#{database}?host=#{config.pg_socket}"
-        else                                     line.gsub(params["host"].as_s, host)
-        end
-      end
-      File.write(File.join(instance_dir(slug), "#{slug}.env"), env.join("\n") + "\n", perm: 0o600)
-      log("instance #{slug} : fichier d'environnement produit ; service, vhost et certificat à installer comme partiduo-provision")
+      guard_slug!(slug)
+      run!(as_root(["remove", slug]))
     end
   end
 end

@@ -1,0 +1,23 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# /etc/partiduo-agent/helpers.conf — configuration des scripts enveloppes de
+# l'exécutant (deploy/libexec/, D-AFN-002). Possédée par root, mode 0644 :
+# les enveloppes refusent de démarrer sinon. Mêmes valeurs que
+# deploy/fleet.conf de partiduo-app ; DOMAIN = --domain de partiduo-agent.
+DOMAIN=partiduo.app
+INSTALL_ROOT=/opt/partiduo
+ETC_DIR=/etc/partiduo
+# Compte système des instances et rôle PostgreSQL propriétaire des bases
+# (même nom : authentification « peer » par le socket Unix).
+SYSTEM_USER=partiduo
+PG_OWNER=partiduo
+PG_SOCKET=/var/run/postgresql
+# partiduo:partiduo-agent, mode 2770 : les deux comptes y écrivent.
+BACKUP_DIR=/var/backups/partiduo
+# Fichiers produits par partiduo-provision (compte des instances).
+STAGE_DIR=/var/lib/partiduo/stage
+# Gabarits de l'unité systemd et des vhosts : copie possédée par root de
+# deploy/templates/ de partiduo-app, jamais celle d'une version installée.
+TEMPLATES_DIR=/usr/local/libexec/partiduo-agent/templates
+ACME_EMAIL=
+ACME_WEBROOT=/var/www/letsencrypt
+ACME_STAGING=0

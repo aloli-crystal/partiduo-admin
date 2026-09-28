@@ -50,6 +50,12 @@ module PartiduoAgent
     property install_root : String = "/opt/partiduo"
     property etc_dir : String = "/etc/partiduo"
     property system_user : String = "partiduo"
+    # Domaine des dossiers de ce serveur (`<sous-domaine>.<domaine>`) : les
+    # hôtes reçus de l'administration doivent lui correspondre (D-AFN-004).
+    # Obligatoire en production ; ailleurs, celui de la tâche.
+    property domain : String = ""
+    # Production : scripts enveloppes possédés par root (D-AFN-002).
+    property helpers_dir : String = "/usr/local/libexec/partiduo-agent"
     property pg_socket : String = "/var/run/postgresql"
     property acme_email : String = ""
     property acme_staging : Bool = false
@@ -76,6 +82,8 @@ module PartiduoAgent
         parser.on("--install-root RÉP", "racine d'installation (production)") { |value| config.install_root = value }
         parser.on("--etc-dir RÉP", "fichiers d'environnement des instances") { |value| config.etc_dir = value }
         parser.on("--system-user NOM", "compte système des instances") { |value| config.system_user = value }
+        parser.on("--domain DOMAINE", "domaine des dossiers de ce serveur (obligatoire en production)") { |value| config.domain = value }
+        parser.on("--helpers-dir RÉP", "production : scripts enveloppes de sudo") { |value| config.helpers_dir = value }
         parser.on("--pg-socket RÉP", "socket PostgreSQL") { |value| config.pg_socket = value }
         parser.on("--acme-email ADRESSE", "compte ACME") { |value| config.acme_email = value }
         parser.on("--acme-staging", "autorité de test de Let's Encrypt") { config.acme_staging = true }
@@ -101,6 +109,10 @@ module PartiduoAgent
       # HTTPS obligatoire (ADR-008 D4), sauf vers la machine elle-même.
       raise ArgumentError.new("l'administration doit être jointe en HTTPS : #{admin_url}") unless uri.scheme == "https" || local
       raise ArgumentError.new("le mode production exige HTTPS") if mode.production? && uri.scheme != "https"
+      unless domain.empty? || PartiduoAdmin::Protocol.valid_domain?(domain)
+        raise ArgumentError.new("domaine invalide : #{domain}")
+      end
+      raise ArgumentError.new("le mode production exige --domain") if mode.production? && domain.empty?
     end
 
     def local? : Bool

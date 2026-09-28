@@ -31,6 +31,7 @@ describe "Exécutant contre l'administration" do
     firm = AdminSpec.firm
     server, token = AdminSpec.server
     admin = AdminSpec.user(PartiduoAdmin::Config::FIRM_ADMIN, firm)
+    PartiduoAdmin::Release.create!(version: "0.1.0")
     input = PartiduoAdmin::Fleet::DossierInput.new(slug: "bout-en-bout", label: "Bout en bout SAS", regime: "fr",
       admin_email: "gerant@bout.fr", server_id: PartiduoAdmin.id?(server.pk), firm_id: PartiduoAdmin.id?(firm.pk),
       payer_id: PartiduoAdmin.id?(AdminSpec.payer(firm).pk), version: "0.1.0")

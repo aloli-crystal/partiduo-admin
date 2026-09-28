@@ -80,7 +80,7 @@ module PartiduoAdmin
         {"slug" => dossier.slug.to_s, "host" => dossier.host, "database" => dossier.database.to_s,
          "expected" => dossier.state == "active" ? "running" : "stopped"}
       end
-      {"dossiers" => Tasks.any(dossiers)}
+      {"dossiers" => Tasks.any(dossiers), "domain" => Tasks.any(server.domain.to_s)}
     end
 
     def self.enqueue(server : Server) : Task

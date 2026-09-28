@@ -192,7 +192,8 @@ describe PartiduoAgent::LocalSystem do
     config = admin.config(PartiduoAgent::Mode::Local)
     config.manage = manage
     config.pg_socket = ENV["PGHOST"]? || "/tmp"
-    params = {"slug" => "spec-local", "host" => "spec-local.partiduo.localhost", "database" => database, "kind" => "manual"}
+    params = {"slug" => "spec-local", "host" => "spec-local.partiduo.localhost", "domain" => "partiduo.localhost",
+              "database" => database, "kind" => "manual"}
     admin.push(20_i64, "backup.run", params)
     run_one(admin, config)
     backup = admin.finished[20_i64]

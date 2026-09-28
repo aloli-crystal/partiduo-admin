@@ -61,7 +61,7 @@ module PartiduoAdmin
       params["approval_ref"] = Tasks.any(approval.reference)
       params["approvers"] = Tasks.any([requester.email.to_s, user.email.to_s])
       params["reason"] = Tasks.any(approval.reason)
-      task = case approval.kind
+      kind = case approval.kind
              when "delete"
                # Recontrôle : l'état a pu changer depuis la demande.
                unless dossier.state == "archived" && (dossier.retention_until.try { |until_time| until_time <= now } || false)
@@ -69,19 +69,37 @@ module PartiduoAdmin
                end
                params["backups"] = Tasks.any(Backup.filter(dossier_id: dossier.pk).exclude(state: "pruned")
                  .flat_map { |backup| [backup.path.to_s, backup.media_path.to_s] }.reject(&.empty?))
-               Tasks.enqueue("instance.delete", dossier.server!, params, user, dossier)
+               "instance.delete"
              else
+               # Recontrôle : le dossier a pu être suspendu ou archivé depuis.
+               return Outcome(Task).failure("base", "admin.errors.dossier.not_active") unless dossier.state == "active"
                params["email"] = Tasks.any(approval.param("email"))
-               Tasks.enqueue("instance.admin_invite", dossier.server!, params, user, dossier)
+               "instance.admin_invite"
              end
-      approval.state = "approved"
-      approval.decided_by = user
-      approval.decided_at = now
-      approval.task = task
-      approval.save!
+      # La demande passe à « validée » par une mise à jour conditionnelle,
+      # dans la transaction qui enregistre la tâche : de deux validations
+      # simultanées, une seule crée la tâche (D-AFN-010).
+      task : Task? = nil
+      Marten::DB::Connection.default.transaction do
+        claimed = Approval.filter(id: approval.pk, state: "pending").update(state: "approved", decided_at: now)
+        if claimed == 1
+          created = Tasks.enqueue(kind, dossier.server!, params, user, dossier)
+          approval.state = "approved"
+          approval.decided_by = user
+          approval.decided_at = now
+          approval.task = created
+          approval.save!
+          task = created
+        end
+      end
+      approved = task
+      if approved.nil?
+        approval.reload
+        return Outcome(Task).failure("base", "admin.errors.approval.state")
+      end
       Audit.log(user, "approval.approve", target: approval,
         detail: {"kind" => approval.kind.to_s, "requested_by" => requester.email.to_s, "dossier" => dossier.slug.to_s})
-      Outcome(Task).new(task)
+      Outcome(Task).new(approved)
     end
 
     def self.reject(user : User, approval : Approval, now : Time = Config.now) : Bool

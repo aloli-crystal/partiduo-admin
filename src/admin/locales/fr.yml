@@ -178,7 +178,7 @@ fr:
       delete: "Suppression définitive"
       delete_help: "Possible seulement après la durée légale de conservation, avec double validation."
       access: "Recours d'accès"
-      access_help: "Réémet l'invitation de l'administrateur du dossier si la société a perdu tout accès. Double validation."
+      access_help: "Réémet l'invitation d'un administrateur existant du dossier si la société a perdu tout accès (adresse d'un compte administrateur de l'instance ; aucun compte n'est créé). Double validation."
       test_restore: "Restauration test"
     restore:
       date: "Date"
@@ -288,6 +288,7 @@ fr:
         agent_silent: "exécutant silencieux"
         test_restore_failed: "restauration test échouée"
         wave_failed: "vague de montée de version arrêtée"
+        mail_failed: "courriel d'invitation non envoyé"
     quota:
       title: "Quota Let's Encrypt"
       help: "50 certificats par semaine pour le domaine ; au-delà, aucun dossier ne peut être créé."

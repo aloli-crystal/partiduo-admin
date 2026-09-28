@@ -94,6 +94,11 @@ module PartiduoAdmin
     end
 
     private def self.schedule_errors(input : DossierInput, errors : Errors) : Nil
+      # Version choisie : une version publiée, jamais une valeur libre (elle
+      # nomme le répertoire que l'exécutant met en service).
+      unless input.version.empty? || Release.filter(version: input.version).exists?
+        add(errors, "version", "admin.errors.invalid")
+      end
       add(errors, "backup_schedule", "admin.errors.invalid") unless Dossier::SCHEDULES.includes?(input.backup_schedule)
       add(errors, "backup_retention_days", "admin.errors.dossier.retention") unless (1..3650).includes?(input.backup_retention_days)
     end
@@ -129,14 +134,14 @@ module PartiduoAdmin
       return Outcome(Task).failure("base", "admin.errors.dossier.not_active") unless dossier.state == "active"
       return Outcome(Task).failure("modules", "admin.errors.dossier.modules") unless valid_modules?(modules)
       return Outcome(Task).failure("extensions", "admin.errors.dossier.extensions") unless valid_extensions?(extensions)
-      current = dossier.module_list + dossier.extension_list
-      target = modules + extensions
-      enable = target - current
-      disable = current - target
+      # Extensions retirées avant les modules (une extension requiert un
+      # module, jamais l'inverse), modules ajoutés avant les extensions ;
+      # l'exécutant affine l'ordre selon les dépendances que rend l'instance
+      # (D-AFN-006). Les données d'une pièce désactivée sont conservées.
+      disable = (dossier.extension_list - extensions) + (dossier.module_list - modules)
+      enable = (modules - dossier.module_list) + (extensions - dossier.extension_list)
       return Outcome(Task).failure("base", "admin.errors.dossier.no_change") if enable.empty? && disable.empty?
       params = Tasks.dossier_params(dossier)
-      # Désactiver d'abord (dépendances : une pièce requise ne se retire
-      # qu'après celles qui la requièrent) ; les données sont conservées.
       params["enable"] = any(enable)
       params["disable"] = any(disable)
       params["target_modules"] = any(modules)
@@ -226,6 +231,10 @@ module PartiduoAdmin
         slug = new_slug.strip.downcase
         return Outcome(Task).failure("new_slug", "admin.errors.dossier.slug") unless Protocol.valid_slug?(slug)
         return Outcome(Task).failure("new_slug", "admin.errors.dossier.slug_taken") if Dossier.filter(slug: slug).exists?
+        # Instance neuve : un certificat de plus, compté comme à la création.
+        if LetsEncrypt.quota_reached?(dossier.server!.domain.to_s, Config.now)
+          return Outcome(Task).failure("base", "admin.errors.dossier.quota")
+        end
         copy = Dossier.create!(slug: slug, label: dossier.label, regime: dossier.regime, locale: dossier.locale,
           siren: dossier.siren, vat_number: dossier.vat_number, modules: dossier.modules, extensions: dossier.extensions,
           admin_email: dossier.admin_email, server: dossier.server!, firm: dossier.firm!, payer: dossier.payer!,

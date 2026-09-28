@@ -169,7 +169,10 @@ module PartiduoAdmin
     end
 
     def self.csv(actor : User) : String
-      CSV.build do |csv|
+      # Toutes les cellules entre guillemets : un retour chariot dans un nom
+      # ne coupe pas la ligne (le constructeur ne cite sinon que le saut de
+      # ligne, la virgule et le guillemet).
+      CSV.build(quoting: CSV::Builder::Quoting::ALL) do |csv|
         csv.row CSV_HEADERS
         dossiers_by_payer(actor).each do |payer, dossiers|
           dossiers.each do |dossier|
@@ -184,9 +187,13 @@ module PartiduoAdmin
       end
     end
 
+    # Caractères de tête à neutraliser (OWASP, « CSV injection ») : formule,
+    # tabulation et retour chariot compris.
+    FORMULA_LEADS = {'=', '+', '-', '@', '\t', '\r'}
+
     # Neutralise une cellule qui serait lue comme une formule par un tableur.
     private def self.safe(cell : String) : String
-      cell.starts_with?('=') || cell.starts_with?('+') || cell.starts_with?('-') || cell.starts_with?('@') ? "'#{cell}" : cell
+      FORMULA_LEADS.includes?(cell[0]?) ? "'#{cell}" : cell
     end
 
     # --- Serveurs et versions ------------------------------------------------
@@ -222,7 +229,7 @@ module PartiduoAdmin
 
     def self.create_release(actor : User, version : String, notes : String, default : Bool) : Outcome(Release)
       return Outcome(Release).failure("base", "admin.errors.forbidden") unless Access.fleet?(actor)
-      return Outcome(Release).failure("version", "admin.errors.invalid") unless version.matches?(/\A\d+\.\d+\.\d+([-.][0-9A-Za-z.]+)?\z/)
+      return Outcome(Release).failure("version", "admin.errors.invalid") unless Protocol.valid_version?(version)
       return Outcome(Release).failure("version", "admin.errors.release.taken") if Release.filter(version: version).exists?
       Release.filter(is_default: true).update(is_default: false) if default
       release = Release.create!(version: version, notes: notes.strip, is_default: default)

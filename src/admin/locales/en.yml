@@ -178,7 +178,7 @@ en:
       delete: "Permanent deletion"
       delete_help: "Only after the legal retention period, with dual approval."
       access: "Access recovery"
-      access_help: "Re-issues the file administrator invitation if the company has lost all access. Dual approval."
+      access_help: "Reissues the invitation of an existing administrator of the file when the company has lost all access (address of an administrator account of the instance; no account is created). Dual approval."
       test_restore: "Test restore"
     restore:
       date: "Date"
@@ -288,6 +288,7 @@ en:
         agent_silent: "agent silent"
         test_restore_failed: "test restore failed"
         wave_failed: "upgrade wave stopped"
+        mail_failed: "invitation email not sent"
     quota:
       title: "Let's Encrypt quota"
       help: "50 certificates per week for the domain; beyond that, no company file can be created."

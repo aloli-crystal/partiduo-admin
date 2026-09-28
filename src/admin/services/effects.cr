@@ -12,6 +12,19 @@ module PartiduoAdmin
       # à l'adresse invitée (instance-cli, `admin-invite`).
       SECRET_KEYS = %w[url token invitation_url]
 
+      # Envoi du lien d'invitation en échec : `Tasks.finish` annule alors
+      # tout (état, résultat expurgé, effets) et répond une erreur à
+      # l'exécutant, qui garde le lien dans son journal de reprise et rend
+      # compte de nouveau à la reprise de la tâche (D-AFN-008).
+      class DeliveryError < Exception
+      end
+
+      def self.deliver_invitation(dossier : Dossier, email : String, url : String) : Nil
+        Mailer.invitation_to_dossier(dossier, email, url)
+      rescue ex
+        raise DeliveryError.new("#{email} : #{ex.class} #{ex.message}")
+      end
+
       def self.sanitize(task : Task, result : JSON::Any) : JSON::Any
         hash = result.as_h?
         return result if hash.nil?
@@ -59,7 +72,7 @@ module PartiduoAdmin
         dossier.save!
         record_certificate(dossier, result, now)
         if url = result["invitation_url"]?.try(&.as_s?)
-          Mailer.invitation_to_dossier(dossier, dossier.admin_email.to_s, url)
+          deliver_invitation(dossier, dossier.admin_email.to_s, url)
         end
       end
 
@@ -121,7 +134,7 @@ module PartiduoAdmin
         return unless ok
         if url = result["url"]?.try(&.as_s?)
           email = result["email"]?.try(&.as_s?) || task.params_json["email"]?.try(&.as_s?) || dossier.admin_email.to_s
-          Mailer.invitation_to_dossier(dossier, email, url)
+          deliver_invitation(dossier, email, url)
         end
       end
 
@@ -159,14 +172,26 @@ module PartiduoAdmin
         if safety = result["safety_backup"]?
           record_backup(task, dossier, "pre_restore", safety, now) if safety.as_h?
         end
-        return unless ok
+        copy = if task.params_json["target"]?.try(&.as_s?) == "new"
+                 task.params_json["new_slug"]?.try(&.as_s?).try { |slug| Dossier.filter(slug: slug).first }
+               end
+        unless ok
+          # Copie non installée : en erreur, comme une création échouée.
+          if copy && copy.state == "creating"
+            copy.state = "error"
+            copy.save!
+          end
+          return
+        end
         if task.params_json["target"]?.try(&.as_s?) == "new"
-          slug = task.params_json["new_slug"]?.try(&.as_s?)
-          if slug && (copy = Dossier.filter(slug: slug).first)
+          if copy
+            # Installée comme à la création (service, vhost, certificat) :
+            # active, certificat compté dans le quota (D-AFN-009).
             copy.state = "active"
             copy.database = result["database"]?.try(&.as_s?) || copy.database
             copy.version = result["version"]?.try(&.as_s?) || copy.version
             copy.save!
+            record_certificate(copy, result, now)
           end
         else
           dossier.state = "active"

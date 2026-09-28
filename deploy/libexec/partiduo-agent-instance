@@ -1,0 +1,261 @@
+#!/bin/sh
+# SPDX-License-Identifier: AGPL-3.0-or-later
+#
+# partiduo-agent-instance — enveloppe des gestes que l'exécutant fait sous le
+# compte des instances (`partiduo`), seule commande que sudoers lui permet
+# sous ce compte (deploy/partiduo-agent.sudoers, D-AFN-002).
+#
+# Installée par root en 0755, possédée par root, dans
+# /usr/local/libexec/partiduo-agent/. Chaque argument est validé ici ; tout
+# le reste (racines, domaine, rôle propriétaire, socket, gabarits) vient de
+# la configuration possédée par root /etc/partiduo-agent/helpers.conf. Aucun
+# argument n'est jamais évalué par un shell.
+#
+#   cli SLUG BASE|- VERSION|- ACTION [ARGUMENTS…]   partiduo-manage instance ACTION
+#   provision SLUG [OPTIONS…]                       partiduo-provision (options permises seulement)
+#   release SLUG VERSION                            lien release/ de l'instance
+#   db-exists BASE                                  code 0 si la base existe, 3 sinon
+#   createdb BASE | dropdb BASE                     base du rôle des instances
+#   dump BASE CHEMIN | restore BASE CHEMIN          pg_dump -Fc / pg_restore (chemins sous BACKUP_DIR)
+#   backup-dir SLUG                                 répertoire de sauvegarde du dossier
+#   media-archive SLUG LISTE ARCHIVE                archive des pièces jointes
+#   media-restore SLUG ARCHIVE                      pièces jointes remises en place
+set -eu
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+export PATH
+umask 027
+
+die() {
+  echo "partiduo-agent-instance : $*" >&2
+  exit 2
+}
+
+# --- Configuration (possédée par root) -----------------------------------------
+
+CONF=/etc/partiduo-agent/helpers.conf
+# Essais (specs) : autre configuration, jamais sous sudo (sudo efface
+# l'environnement et pose SUDO_USER).
+if [ -n "${PARTIDUO_AGENT_HELPERS_CONF:-}" ] && [ -z "${SUDO_USER:-}" ]; then
+  CONF="$PARTIDUO_AGENT_HELPERS_CONF"
+else
+  [ "$(stat -c %u "$CONF" 2>/dev/null || echo x)" = 0 ] || die "configuration absente ou non possédée par root : $CONF"
+fi
+DOMAIN=""
+INSTALL_ROOT=/opt/partiduo
+ETC_DIR=/etc/partiduo
+SYSTEM_USER=partiduo
+PG_OWNER=partiduo
+PG_SOCKET=/var/run/postgresql
+BACKUP_DIR=/var/backups/partiduo
+STAGE_DIR=/var/lib/partiduo/stage
+ACME_EMAIL=""
+ACME_WEBROOT=/var/www/letsencrypt
+ACME_STAGING=0
+# shellcheck disable=SC1090
+. "$CONF"
+export PGHOST="$PG_SOCKET"
+
+# --- Validation ------------------------------------------------------------------
+
+check_slug() {
+  printf '%s' "$1" | grep -Eq '^[a-z][a-z0-9-]{0,39}$' || die "sous-domaine invalide"
+  case "$1" in *-) die "sous-domaine invalide" ;; admin | www | rt-*) die "sous-domaine réservé" ;; esac
+}
+
+check_database() {
+  printf '%s' "$1" | grep -Eq '^partiduo_[a-z0-9_]{1,54}$' || die "base refusée"
+  [ "$1" != partiduo_admin ] || die "base refusée"
+}
+
+check_version() {
+  printf '%s' "$1" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+([-.][0-9A-Za-z]+)*$' || die "version invalide"
+  [ -d "$INSTALL_ROOT/releases/$1" ] || die "version absente : $1"
+}
+
+# Chemin de sauvegarde : sous BACKUP_DIR, sans « .. », caractères sûrs.
+check_backup_path() {
+  printf '%s' "$1" | grep -Eq '^/[A-Za-z0-9_./-]+$' || die "chemin refusé"
+  case "$1" in "$BACKUP_DIR"/*) ;; *) die "chemin hors du répertoire des sauvegardes" ;; esac
+  case "/$1/" in */../* | */./*) die "chemin refusé" ;; esac
+}
+
+media_root() { echo "$INSTALL_ROOT/instances/$1/media"; }
+
+# --- Gestes ----------------------------------------------------------------------
+
+[ $# -ge 1 ] || die "usage : cli | provision | release | db-exists | createdb | dropdb | dump | restore | backup-dir | media-archive | media-restore"
+command="$1"
+shift
+
+case "$command" in
+  cli)
+    [ $# -ge 4 ] || die "usage : cli SLUG BASE|- VERSION|- ACTION [ARGUMENTS…]"
+    slug="$1" database="$2" version="$3" action="$4"
+    shift 4
+    check_slug "$slug"
+    case "$action" in
+      version | status | migrations | migrate | enable | disable | read-only | admin-invite | backup-plan) ;;
+      *) die "action refusée" ;;
+    esac
+    # Seule option qui écrit un fichier : sous BACKUP_DIR seulement.
+    expect_path=0
+    for arg in "$@"; do
+      if [ "$expect_path" = 1 ]; then check_backup_path "$arg"; expect_path=0; continue; fi
+      case "$arg" in
+        --list-file) expect_path=1 ;;
+        --list-file=*) check_backup_path "${arg#--list-file=}" ;;
+      esac
+    done
+    [ "$expect_path" = 0 ] || die "--list-file : chemin manquant"
+    if [ "$version" = - ]; then
+      manage="$INSTALL_ROOT/instances/$slug/release/bin/partiduo-manage"
+    else
+      check_version "$version"
+      manage="$INSTALL_ROOT/releases/$version/bin/partiduo-manage"
+    fi
+    env_file="$ETC_DIR/$slug.env"
+    if [ -f "$env_file" ]; then
+      set -a
+      # shellcheck disable=SC1090 # écrit par root après validation (partiduo-agent-root install)
+      . "$env_file"
+      set +a
+    fi
+    if [ "$database" != - ]; then
+      check_database "$database"
+      DATABASE_URL="postgres:///$database?host=$PG_SOCKET"
+      export DATABASE_URL
+    fi
+    exec "$manage" instance "$action" "$@"
+    ;;
+
+  provision)
+    [ $# -ge 1 ] || die "usage : provision SLUG [OPTIONS…]"
+    slug="$1"
+    shift
+    check_slug "$slug"
+    [ -n "$DOMAIN" ] || die "DOMAIN manquant dans $CONF"
+    release="$INSTALL_ROOT/current"
+    set -- "$@" --end--
+    while [ "$1" != --end-- ]; do
+      option="$1"
+      shift
+      case "$option" in
+        --skip-createdb | --files-only) set -- "$@" "$option" ;;
+        --name | --admin-email | --siren | --vat)
+          [ "$1" != --end-- ] || die "$option : valeur manquante"
+          set -- "$@" "$option=$1"
+          shift
+          ;;
+        --regime)
+          case "$1" in fr | be) ;; *) die "régime refusé" ;; esac
+          set -- "$@" "$option=$1"
+          shift
+          ;;
+        --locale)
+          case "$1" in fr | en | nl) ;; *) die "langue refusée" ;; esac
+          set -- "$@" "$option=$1"
+          shift
+          ;;
+        --modules | --with)
+          printf '%s' "$1" | grep -Eq '^([a-z][a-z0-9_]*(,[a-z][a-z0-9_]*)*)?$' || die "codes refusés"
+          set -- "$@" "$option=$1"
+          shift
+          ;;
+        --release)
+          check_version "$1"
+          release="$INSTALL_ROOT/releases/$1"
+          shift
+          ;;
+        *) die "option refusée : $option" ;;
+      esac
+    done
+    shift
+    acme=""
+    [ -z "$ACME_EMAIL" ] || acme="--acme-email=$ACME_EMAIL"
+    staging=""
+    [ "$ACME_STAGING" = 0 ] || staging="--acme-staging"
+    mkdir -p "$STAGE_DIR"
+    # Base : celle du sous-domaine, propriété du rôle des instances.
+    database="partiduo_$(printf '%s' "$slug" | tr '-' '_')"
+    exec env PARTIDUO_TEMPLATES="$release/deploy/templates" PARTIDUO_MANAGE="$release/bin/partiduo-manage" \
+      "$release/bin/partiduo-provision" --domain="$DOMAIN" --owner="$PG_OWNER" --database="$database" \
+      --pg-socket="$PG_SOCKET" --install-root="$INSTALL_ROOT" --etc-dir="$ETC_DIR" --system-user="$SYSTEM_USER" \
+      --output-dir="$STAGE_DIR" --manage="$release/bin/partiduo-manage" --acme-webroot="$ACME_WEBROOT" \
+      ${acme:+"$acme"} ${staging:+"$staging"} "$@" "$slug"
+    ;;
+
+  release)
+    [ $# -eq 2 ] || die "usage : release SLUG VERSION"
+    check_slug "$1"
+    check_version "$2"
+    [ -d "$INSTALL_ROOT/instances/$1" ] || die "instance absente : $1"
+    exec ln -sfn "$INSTALL_ROOT/releases/$2" "$INSTALL_ROOT/instances/$1/release"
+    ;;
+
+  db-exists)
+    [ $# -eq 1 ] || die "usage : db-exists BASE"
+    check_database "$1"
+    found=$(psql -X -d postgres -tAc "SELECT 1 FROM pg_database WHERE datname = '$1'")
+    [ "$found" = 1 ] && exit 0
+    exit 3
+    ;;
+
+  createdb)
+    [ $# -eq 1 ] || die "usage : createdb BASE"
+    check_database "$1"
+    exec createdb --owner="$PG_OWNER" --encoding=UTF8 "$1"
+    ;;
+
+  dropdb)
+    [ $# -eq 1 ] || die "usage : dropdb BASE"
+    check_database "$1"
+    exec dropdb --if-exists "$1"
+    ;;
+
+  dump)
+    [ $# -eq 2 ] || die "usage : dump BASE CHEMIN"
+    check_database "$1"
+    check_backup_path "$2"
+    exec pg_dump -Fc --no-owner -f "$2" "$1"
+    ;;
+
+  restore)
+    [ $# -eq 2 ] || die "usage : restore BASE CHEMIN"
+    check_database "$1"
+    check_backup_path "$2"
+    exec pg_restore --no-owner --exit-on-error -d "$1" "$2"
+    ;;
+
+  backup-dir)
+    [ $# -eq 1 ] || die "usage : backup-dir SLUG"
+    check_slug "$1"
+    # Groupe de l'exécutant hérité de BACKUP_DIR (setgid) : il relit,
+    # vérifie et efface les sauvegardes.
+    mkdir -p "$BACKUP_DIR/$1"
+    exec chmod 2770 "$BACKUP_DIR/$1"
+    ;;
+
+  media-archive)
+    [ $# -eq 3 ] || die "usage : media-archive SLUG LISTE ARCHIVE"
+    check_slug "$1"
+    check_backup_path "$2"
+    check_backup_path "$3"
+    root=$(media_root "$1")
+    if [ ! -d "$root" ] || [ ! -s "$2" ]; then
+      # Aucune pièce jointe : archive vide, pour une sauvegarde homogène.
+      exec tar -czf "$3" -T /dev/null
+    fi
+    exec tar -C "$root" --ignore-failed-read -czf "$3" -T "$2"
+    ;;
+
+  media-restore)
+    [ $# -eq 2 ] || die "usage : media-restore SLUG ARCHIVE"
+    check_slug "$1"
+    check_backup_path "$2"
+    root=$(media_root "$1")
+    mkdir -p "$root"
+    exec tar -C "$root" --no-same-owner -xzf "$2"
+    ;;
+
+  *) die "geste refusé : $command" ;;
+esac

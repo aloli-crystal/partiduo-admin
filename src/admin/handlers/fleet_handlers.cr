@@ -49,7 +49,7 @@ module PartiduoAdmin
       raise Access::Denied.new("task") if task.nil?
       template = htmx? ? "admin/_task_body.html" : "admin/task.html"
       page(template, {"task" => task, "result" => task.result.presence || "{}",
-                      "can_retry" => task.state == "failed" && !user.file_manager?, "can_cancel" => task.state == "pending" && !user.file_manager?})
+                      "can_retry" => Tasks.retryable?(task) && !user.file_manager?, "can_cancel" => task.state == "pending" && !user.file_manager?})
     end
   end
 

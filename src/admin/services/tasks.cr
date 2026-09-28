@@ -84,27 +84,59 @@ module PartiduoAdmin
       task.save!
     end
 
-    # Fin de tâche : état, résultat, erreur, puis effets sur l'inventaire.
+    # Fin de tâche : état, résultat, erreur, puis effets sur l'inventaire,
+    # dans une transaction. Le passage `running` → état final est une mise
+    # à jour conditionnelle : seul le premier de deux comptes rendus
+    # concurrents applique les effets (sauvegardes, courriels). Rend `true`
+    # si ce compte rendu a été appliqué. Un envoi d'invitation en échec
+    # annule tout et lève `Effects::DeliveryError`, après avoir ouvert une
+    # alerte : la tâche reste en cours, l'exécutant rendra compte de
+    # nouveau (D-AFN-008).
     def self.finish(task : Task, ok : Bool, result : JSON::Any, error : String = "",
-                    lines = [] of String, now : Time = Config.now) : Nil
-      return if task.finished
-      append_log(task, lines)
-      task.state = ok ? "succeeded" : "failed"
-      task.finished_at = now
-      task.lease_until = nil
-      task.result = Effects.sanitize(task, result).to_json
-      task.error = error[0, 4000]? || ""
-      task.save!
-      Audit.log(nil, "task.#{task.state}", target: task,
-        detail: {"kind" => task.kind.to_s, "dossier" => task.dossier_slug, "error" => task.error.to_s},
-        outcome: ok ? "ok" : "fail", actor_label: "agent:#{task.server.try(&.name)}")
-      Effects.apply(task, ok, result, now)
+                    lines = [] of String, now : Time = Config.now) : Bool
+      return false if task.finished
+      state = ok ? "succeeded" : "failed"
+      applied = false
+      begin
+        Marten::DB::Connection.default.transaction do
+          claimed = Task.filter(id: task.pk, state: "running")
+            .update(state: state, finished_at: now, lease_until: nil, updated_at: now)
+          if claimed == 1
+            append_log(task, lines)
+            task.state = state
+            task.finished_at = now
+            task.lease_until = nil
+            task.result = Effects.sanitize(task, result).to_json
+            task.error = error[0, 4000]? || ""
+            task.save!
+            Audit.log(nil, "task.#{task.state}", target: task,
+              detail: {"kind" => task.kind.to_s, "dossier" => task.dossier_slug, "error" => task.error.to_s},
+              outcome: ok ? "ok" : "fail", actor_label: "agent:#{task.server.try(&.name)}")
+            Effects.apply(task, ok, result, now)
+            applied = true
+          end
+        end
+      rescue ex : Effects::DeliveryError
+        task.reload
+        Alerts.open("mail_failed", "danger", dossier: task.dossier, detail: "task #{task.pk} #{ex.message}", now: now)
+        raise ex
+      end
+      task.reload unless applied
+      applied
+    end
+
+    # Types soumis à double validation : jamais rejoués sans une nouvelle
+    # validation (l'état du dossier a pu changer, D-AFN-010).
+    DOUBLE_VALIDATION = %w[instance.admin_invite instance.delete]
+
+    def self.retryable?(task : Task) : Bool
+      task.state == "failed" && !DOUBLE_VALIDATION.includes?(task.kind)
     end
 
     # Rejouer une tâche échouée : même type, mêmes paramètres ; les étapes
     # déjà faites sont sautées par l'exécutant (tâches idempotentes).
     def self.retry(user : User, task : Task) : Bool
-      return false unless task.state == "failed"
+      return false unless retryable?(task)
       task.state = "pending"
       task.finished_at = nil
       task.error = ""

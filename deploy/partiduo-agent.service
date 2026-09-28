@@ -1,7 +1,9 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Exécutant d'un serveur d'hébergement (ADR-008 D4) : tire ses tâches de
 # l'administration en HTTPS avec le jeton du serveur. Utilisateur dédié, sans
-# autre privilège que les commandes permises par sudoers (partiduo-agent.sudoers).
+# autre privilège que les deux scripts enveloppes permis par sudoers
+# (partiduo-agent.sudoers, libexec/, helpers.conf.example, D-AFN-002).
+# --domain : même valeur que DOMAIN dans /etc/partiduo-agent/helpers.conf.
 [Unit]
 Description=Partiduo — exécutant de l'administration
 After=network-online.target postgresql.service
@@ -13,7 +15,8 @@ ExecStart=/opt/partiduo-admin/current/bin/partiduo-agent --mode production \
   --admin-url https://admin.partiduo.app --token-file /etc/partiduo/agent.token \
   --state-dir /var/lib/partiduo-agent --backup-dir /var/backups/partiduo \
   --provision /opt/partiduo/current/bin/partiduo-provision --releases-dir /opt/partiduo/releases \
-  --pg-socket /var/run/postgresql
+  --pg-socket /var/run/postgresql --domain partiduo.app \
+  --helpers-dir /usr/local/libexec/partiduo-agent
 Restart=always
 RestartSec=10
 

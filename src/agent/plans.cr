@@ -27,19 +27,59 @@ module PartiduoAgent
       params[key]?.try(&.as_a?).try(&.map(&.to_s)) || [] of String
     end
 
+    # Version de partiduo-app portée par un paramètre : vide, ou une version
+    # publiée (`Protocol::VERSION`) ; jamais un chemin.
+    def release(key : String) : String
+      value = param(key)
+      unless value.empty? || PartiduoAdmin::Protocol.valid_version?(value)
+        raise StepError.new("version invalide : #{value}", "usage")
+      end
+      value
+    end
+
     def slug : String
       value = param("slug")
       raise StepError.new("sous-domaine invalide : #{value}", "usage") unless PartiduoAdmin::Protocol.valid_slug?(value)
       value
     end
 
-    def host : String
-      param("host")
+    # Domaine des dossiers du serveur : celui de la configuration de
+    # l'exécutant (obligatoire en production) ; à défaut (modes local et à
+    # blanc), celui de la tâche, vérifié. Un domaine de tâche différent de
+    # celui de la configuration est refusé.
+    def domain : String
+      configured = system.config.domain
+      given = param("domain")
+      if !configured.empty? && !given.empty? && given != configured
+        raise StepError.new("domaine refusé : #{given} (serveur : #{configured})", "usage")
+      end
+      value = configured.presence || given
+      raise StepError.new("domaine invalide : #{value}", "usage") unless PartiduoAdmin::Protocol.valid_domain?(value)
+      value
     end
 
-    # Base du dossier : celle que l'inventaire connaît, sinon celle du mode.
+    # Hôte d'un dossier : toujours calculé (`<sous-domaine>.<domaine>`) ;
+    # l'hôte reçu, s'il y en a un, doit être celui-là (D-AFN-004).
+    def host_for(slug : String, key : String = "host") : String
+      expected = "#{slug}.#{domain}"
+      given = param(key)
+      raise StepError.new("hôte refusé : #{given} (attendu : #{expected})", "usage") unless given.empty? || given == expected
+      expected
+    end
+
+    def host : String
+      host_for(slug)
+    end
+
+    # Base du dossier : toujours celle du sous-domaine dans ce mode ; la base
+    # reçue de l'administration, s'il y en a une, doit être celle-là
+    # (D-AFN-004). Une tâche forgée ne vise donc jamais la base d'un autre
+    # dossier.
     def database : String
-      param("database").presence || @journal["database"]? || system.database_for(slug)
+      expected = system.database_for(slug)
+      given = param("database")
+      raise StepError.new("base refusée : #{given} (attendue : #{expected})", "usage") unless given.empty? || given == expected
+      expected
     end
 
     def log(line : String) : Nil
@@ -104,6 +144,12 @@ module PartiduoAgent
 
     def self.run(ctx : Context) : Nil
       plan = PLANS[ctx.task.kind]? || raise StepError.new("type de tâche refusé : #{ctx.task.kind}", "usage")
+      # Tâche d'un dossier : sous-domaine, hôte et base vérifiés avant tout
+      # geste (D-AFN-004).
+      unless ctx.task.kind == "supervision.check"
+        ctx.host
+        ctx.database
+      end
       plan.call(ctx)
     end
 
@@ -122,24 +168,24 @@ module PartiduoAgent
 
     def self.create(ctx : Context) : Nil
       system = ctx.system
-      database = system.database_for(ctx.slug)
-      ctx.journal["database"] = database
-      check_contract(ctx, ctx.param("version").presence)
+      database = ctx.database
+      host = ctx.host
+      check_contract(ctx, ctx.release("version").presence)
       ctx.step("provisionnement") do
         exists = system.database_exists?(database)
         provisioned = exists && ctx.instance("status", database: database).data["provisioned"]?.try(&.as_bool?) == true
         if provisioned
           ctx.log("base #{database} déjà provisionnée : rien à refaire")
         else
-          output = system.provision(ctx.slug, ctx.params, database, skip_createdb: exists)
+          output = system.provision(ctx.slug, ctx.domain, ctx.params, database, skip_createdb: exists)
           if link = output.match(/https?:\/\/\S+\/invitation\/\S+/)
             ctx.journal["invitation_url"] = link[0]
           end
         end
-        system.switch_release(ctx.slug, ctx.param("version")) unless ctx.param("version").empty?
+        system.switch_release(ctx.slug, ctx.release("version")) unless ctx.release("version").empty?
       end
       ctx.step("installation") do
-        ctx.journal["certificate"] = system.install_instance(ctx.slug, ctx.host).to_s
+        ctx.journal["certificate"] = system.install_instance(ctx.slug, host).to_s
       end
       status = ctx.instance!("status", database: database)
       raise StepError.new("instance non provisionnée après création", "refused") unless status["provisioned"]?.try(&.as_bool?)
@@ -151,16 +197,71 @@ module PartiduoAgent
 
     # --- Modules et extensions (ADR-006 D2 : désactiver conserve les données)
 
+    # Ordre des gestes selon les dépendances que rend `status`
+    # (`depends_on`) : une pièce se désactive après celles qui la requièrent,
+    # s'active après celles qu'elle requiert (`Modules.deactivate` et
+    # `activate` refusent sinon). Sans dépendance connue, l'ordre reçu est
+    # gardé (l'admin met déjà les extensions avant les modules à la
+    # désactivation, après à l'activation).
     def self.modules(ctx : Context) : Nil
       check_contract(ctx)
-      ctx.list("disable").each do |code|
+      depends = dependencies(ctx.instance!("status"))
+      disable_order(ctx.list("disable"), depends).each do |code|
         ctx.step("désactiver #{code}") { ctx.instance!("disable", [code]) }
       end
-      ctx.list("enable").each do |code|
+      enable_order(ctx.list("enable"), depends).each do |code|
         ctx.step("activer #{code}") { ctx.instance!("enable", [code]) }
       end
       status = ctx.instance!("status")
       ctx.set("modules", status["modules"]? || [] of String)
+    end
+
+    alias Depends = Hash(String, Array(String))
+
+    # Dépendances par pièce (codes en majuscules ; une alternative `A|B`
+    # compte ses deux membres).
+    def self.dependencies(status : JSON::Any) : Depends
+      depends = Depends.new
+      (status["modules"]?.try(&.as_a?) || [] of JSON::Any).each do |piece|
+        code = piece["code"]?.try(&.as_s?) || next
+        list = piece["depends_on"]?.try(&.as_a?).try(&.compact_map(&.as_s?)) || [] of String
+        depends[code.upcase] = list.flat_map(&.split('|')).map(&.upcase)
+      end
+      depends
+    end
+
+    # Pièces requises d'abord.
+    def self.enable_order(codes : Array(String), depends : Depends) : Array(String)
+      ordered = [] of String
+      codes.each { |code| visit(code, codes, depends, false, ordered, Set(String).new) }
+      ordered
+    end
+
+    # Pièces qui requièrent les autres d'abord.
+    def self.disable_order(codes : Array(String), depends : Depends) : Array(String)
+      ordered = [] of String
+      codes.each { |code| visit(code, codes, depends, true, ordered, Set(String).new) }
+      ordered
+    end
+
+    private def self.requires?(code : String, other : String, depends : Depends) : Bool
+      (depends[code.upcase]? || [] of String).includes?(other.upcase)
+    end
+
+    # Parcours en profondeur : passent avant `code` les codes qu'il requiert
+    # (`dependents` faux) ou ceux qui le requièrent (`dependents` vrai) ;
+    # un cycle est ignoré.
+    private def self.visit(code : String, codes : Array(String), depends : Depends, dependents : Bool,
+                           ordered : Array(String), path : Set(String)) : Nil
+      return if ordered.includes?(code) || path.includes?(code)
+      path << code
+      codes.each do |other|
+        next if other == code
+        first = dependents ? requires?(other, code, depends) : requires?(code, other, depends)
+        visit(other, codes, depends, dependents, ordered, path) if first
+      end
+      path.delete(code)
+      ordered << code
     end
 
     # --- Cycle de vie -----------------------------------------------------------
@@ -228,14 +329,19 @@ module PartiduoAgent
 
     # --- Montée de version (sauvegarde préalable, retour arrière) --------------
 
+    # Le service est arrêté AVANT la sauvegarde préalable : rien n'est écrit
+    # entre la sauvegarde et un éventuel retour arrière (D-AFN-007). Tout
+    # échec, prévu (`StepError`) ou non (clé absente, réponse illisible,
+    # erreur de fichier), déclenche le retour arrière.
     def self.upgrade(ctx : Context) : Nil
-      target = ctx.param("version")
-      from = ctx.param("from_version").presence || ctx.system.current_release(ctx.slug) || ""
+      target = ctx.release("version")
+      from = ctx.release("from_version").presence || ctx.system.current_release(ctx.slug) || ""
       raise StepError.new("version cible manquante", "usage") if target.empty?
       check_contract(ctx, target)
-      backup_data = backup(ctx, "pre_upgrade", prefix: "pre-upgrade")
+      backup_data : JSON::Any? = nil
       begin
         ctx.step("arrêt du service") { ctx.system.service(ctx.slug, "stop") }
+        backup_data = backup(ctx, "pre_upgrade", prefix: "pre-upgrade")
         ctx.step("bascule vers #{target}") { ctx.system.switch_release(ctx.slug, target) }
         ctx.step("migrations") { ctx.instance!("migrate", version: target) }
         ctx.step("démarrage du service") { ctx.system.service(ctx.slug, "start") }
@@ -246,30 +352,37 @@ module PartiduoAgent
         ctx.set("version", status["version"]?.try(&.as_s?) || target)
         ctx.set("backup", backup_data)
         ctx.set("rolled_back", false)
-      rescue error : StepError
+      rescue error
         ctx.log("échec : #{error.message} — retour arrière vers #{from}")
-        rollback(ctx, from, backup_data)
+        code = error.is_a?(StepError) ? error.code : "internal"
+        begin
+          rollback(ctx, target, from, backup_data)
+        rescue ex
+          raise StepError.new("montée vers #{target} échouée (#{error.message}) ; retour arrière incomplet : " \
+                              "#{ex.message}", "internal")
+        end
         ctx.result.clear
-        ctx.set("backup", backup_data)
+        ctx.set("backup", backup_data) if backup_data
         ctx.set("rolled_back", true)
         ctx.set("version", from)
         # Le dossier est revenu à son état d'avant : une reprise repartira
         # de zéro, sauvegarde comprise.
         ctx.journal.reset
-        raise StepError.new("montée vers #{target} échouée, retour à #{from} : #{error.message}", error.code)
+        raise StepError.new("montée vers #{target} échouée, retour à #{from} : #{error.message}", code)
       end
     end
 
-    def self.rollback(ctx : Context, from : String, backup_data : JSON::Any) : Nil
+    def self.rollback(ctx : Context, target : String, from : String, backup_data : JSON::Any?) : Nil
       system = ctx.system
       system.service(ctx.slug, "stop")
       system.switch_release(ctx.slug, from) unless from.empty?
-      if ctx.journal.done?("migrations") || ctx.journal.done?("bascule vers #{ctx.param("version")}")
+      if ctx.journal.done?("migrations") || ctx.journal.done?("bascule vers #{target}")
         # Migrations peut-être en partie appliquées : la base revient à la
-        # sauvegarde préalable.
+        # sauvegarde préalable, prise service arrêté.
+        path = backup_data.try(&.["path"]?).try(&.as_s?) || raise StepError.new("sauvegarde préalable introuvable")
         system.dropdb(ctx.database)
         system.createdb(ctx.database)
-        system.pg_restore(ctx.database, backup_data["path"].as_s)
+        system.pg_restore(ctx.database, path)
       end
       system.service(ctx.slug, "start")
     end
@@ -296,16 +409,22 @@ module PartiduoAgent
       dump = File.join(dir, "#{prefix}-#{stamp}.dump")
       list = File.join(dir, "#{prefix}-#{stamp}.files")
       media = File.join(dir, "#{prefix}-#{stamp}.media.tar.gz")
-      ctx.step("#{prefix} : base") do
+      # Pièces jointes relevées avant ET après pg_dump : l'archive porte
+      # l'union des deux listes, donc toute pièce que la base sauvegardée
+      # peut citer, même déposée ou supprimée pendant la sauvegarde
+      # (D-AFN-012).
+      ctx.step("#{prefix} : liste des pièces jointes") do
         system.mkdir(dir)
-        system.pg_dump(ctx.database, dump)
+        ctx.instance!("backup-plan", ["--list-file", "#{list}.before"])
       end
+      ctx.step("#{prefix} : base") { system.pg_dump(ctx.database, dump) }
       ctx.step("#{prefix} : pièces jointes") do
-        plan = ctx.instance!("backup-plan", ["--list-file", list])
-        ctx.journal["#{prefix}.media_root"] = plan["media_root"]?.try(&.as_s?) || ""
+        plan = ctx.instance!("backup-plan", ["--list-file", "#{list}.after"])
+        root = plan["media_root"]?.try(&.as_s?) || ""
         missing = plan["missing"]?.try(&.as_a?).try(&.size) || 0
         ctx.log("#{missing} pièce(s) jointe(s) manquante(s) à signaler") if missing > 0
-        system.tar_create(ctx.journal["#{prefix}.media_root"]? || "", list, media)
+        system.merge_lists(["#{list}.before", "#{list}.after"], list)
+        system.tar_create(ctx.slug, root, list, media)
       end
       data = {
         "kind"       => kind,
@@ -359,57 +478,123 @@ module PartiduoAgent
       system = ctx.system
       path = system.guard_backup_path!(ctx.param("path"))
       media = ctx.param("media_path")
-      if ctx.param("target") == "new"
-        new_slug = ctx.param("new_slug")
-        raise StepError.new("sous-domaine invalide : #{new_slug}", "usage") unless PartiduoAdmin::Protocol.valid_slug?(new_slug)
-        database = system.database_for(new_slug)
-        ctx.step("base neuve") do
-          system.dropdb(database) if system.database_exists?(database)
-          system.createdb(database)
-          system.pg_restore(database, path)
-        end
-        ctx.step("fichiers de service") { system.render_instance(new_slug, ctx.param("new_host"), database, ctx.params) }
-        ctx.set("database", database)
-        ctx.set("version", ctx.instance!("status", database: database, slug_override: new_slug)["version"]? || "")
-        return
+      media = system.guard_backup_path!(media) unless media.empty?
+      unless ctx.param("sha256").empty? || system.sha256(path) == ctx.param("sha256")
+        raise StepError.new("empreinte de la sauvegarde altérée : #{path}")
       end
-      safety = backup(ctx, "pre_restore", prefix: "pre-restore")
-      ctx.result.clear
-      ctx.set("safety_backup", safety)
-      ctx.step("arrêt du service") { system.service(ctx.slug, "stop") }
+      ctx.param("target") == "new" ? restore_new(ctx, path, media) : restore_replace(ctx, path, media)
+    end
+
+    # Instance neuve : base restaurée, fichiers de service produits par
+    # `partiduo-provision --files-only` (nouveau port, nouvelle clé
+    # secrète), installation comme à la création (service, vhost,
+    # certificat compté dans le quota), pièces jointes (D-AFN-009).
+    def self.restore_new(ctx : Context, path : String, media : String) : Nil
+      system = ctx.system
+      new_slug = ctx.param("new_slug")
+      raise StepError.new("sous-domaine invalide : #{new_slug}", "usage") unless PartiduoAdmin::Protocol.valid_slug?(new_slug)
+      raise StepError.new("instance neuve identique à la source", "usage") if new_slug == ctx.slug
+      host = ctx.host_for(new_slug, "new_host")
+      database = system.database_for(new_slug)
+      ctx.step("base neuve") do
+        system.dropdb(database) if system.database_exists?(database)
+        system.createdb(database)
+        system.pg_restore(database, path)
+      end
+      ctx.step("fichiers de service") { system.provision_files(new_slug, ctx.domain, ctx.params, database) }
+      ctx.step("installation") do
+        ctx.journal["certificate"] = system.install_instance(new_slug, host).to_s
+        version = ctx.release("version")
+        system.switch_release(new_slug, version) unless version.empty?
+      end
+      ctx.step("pièces jointes") { system.tar_extract(new_slug, media) unless media.empty? }
+      ctx.set("database", database)
+      ctx.set("version", ctx.instance!("status", database: database, slug_override: new_slug)["version"]? || "")
+      ctx.set("certificate", {"issued" => ctx.journal["certificate"]? == "true", "staging" => system.config.acme_staging})
+    end
+
+    # Remplacement : service arrêté AVANT la sauvegarde de sûreté (rien
+    # n'est écrit entre les deux), base puis pièces jointes remplacées.
+    # Un échec avant le remplacement de la base redémarre le service.
+    def self.restore_replace(ctx : Context, path : String, media : String) : Nil
+      system = ctx.system
+      begin
+        ctx.step("arrêt du service") { system.service(ctx.slug, "stop") }
+        safety = backup(ctx, "pre_restore", prefix: "pre-restore")
+        ctx.result.clear
+        ctx.set("safety_backup", safety)
+      rescue error
+        system.service(ctx.slug, "start")
+        raise error
+      end
       ctx.step("base remplacée") do
         system.dropdb(ctx.database)
         system.createdb(ctx.database)
         system.pg_restore(ctx.database, path)
       end
-      ctx.step("pièces jointes") do
-        root = ctx.journal["pre-restore.media_root"]?
-        system.tar_extract(system.guard_backup_path!(media), root) if root && !root.empty? && !media.empty?
-      end
+      ctx.step("pièces jointes") { system.tar_extract(ctx.slug, media) unless media.empty? }
       ctx.step("démarrage du service") { system.service(ctx.slug, "start") }
       ctx.set("version", ctx.instance!("status")["version"]? || "")
     end
 
     # --- Supervision ---------------------------------------------------------------
 
+    # Une entrée mal formée ou dont l'hôte ou la base ne correspondent pas
+    # au sous-domaine est ignorée (et journalisée) : elle ne fait pas
+    # échouer la supervision des autres dossiers du serveur.
     def self.supervision(ctx : Context) : Nil
       system = ctx.system
       total, free = system.disk(system.config.backup_dir)
       ctx.set("disk", {"total_bytes" => total, "free_bytes" => free})
-      entries = (ctx.params["dossiers"]?.try(&.as_a?) || [] of JSON::Any).map do |entry|
-        slug = entry["slug"].as_s
-        next unless PartiduoAdmin::Protocol.valid_slug?(slug)
-        database = entry["database"]?.try(&.as_s?).presence || system.database_for(slug)
-        reply = system.instance(slug, "status", ["--task", ctx.task.id.to_s], nil, database)
-        {
-          "slug"            => slug,
-          "service"         => system.service(slug, "status"),
-          "database"        => reply.ok? ? "ok" : (reply.exit_code == 6 ? "unavailable" : "error"),
-          "version"         => reply.ok? ? (reply.data["version"]?.try(&.as_s?) || "") : "",
-          "cert_expires_at" => system.cert_expiry(entry["host"]?.try(&.as_s?) || "").try(&.to_rfc3339),
-        }
+      entries = (ctx.params["dossiers"]?.try(&.as_a?) || [] of JSON::Any).compact_map do |entry|
+        supervise(ctx, entry)
       end
-      ctx.set("dossiers", entries.compact)
+      ctx.set("dossiers", entries)
+    end
+
+    def self.supervise(ctx : Context, entry : JSON::Any) : Hash(String, String?)?
+      system = ctx.system
+      slug = entry.as_h?.try(&.["slug"]?).try(&.as_s?) || ""
+      unless PartiduoAdmin::Protocol.valid_slug?(slug)
+        ctx.log("supervision : entrée ignorée (sous-domaine invalide)")
+        return
+      end
+      database = system.database_for(slug)
+      host = supervised_host(ctx, slug, entry)
+      given_database = entry["database"]?.try(&.as_s?) || ""
+      if host.nil? || !(given_database.empty? || given_database == database)
+        ctx.log("supervision : #{slug} ignoré (hôte ou base sans rapport avec le sous-domaine)")
+        return
+      end
+      reply = system.instance(slug, "status", ["--task", ctx.task.id.to_s], nil, database)
+      {
+        "slug"            => slug,
+        "service"         => system.service(slug, "status"),
+        "database"        => database_state(reply),
+        "version"         => reply.ok? ? (reply.data["version"]?.try(&.as_s?) || "") : "",
+        "cert_expires_at" => (host.empty? ? nil : system.cert_expiry(host)).try(&.to_rfc3339),
+      }
+    rescue error : StepError
+      ctx.log("supervision : #{slug} en erreur (#{error.message})")
+      nil
+    end
+
+    private def self.database_state(reply : InstanceReply) : String
+      return "ok" if reply.ok?
+      reply.exit_code == 6 ? "unavailable" : "error"
+    end
+
+    # Hôte d'un dossier supervisé : `<sous-domaine>.<domaine>` (domaine de
+    # l'exécutant, sinon de la tâche) ; l'hôte reçu doit être celui-là.
+    # `nil` si l'entrée désigne un autre hôte ; chaîne vide si aucun n'est
+    # connu (pas de relevé de certificat).
+    private def self.supervised_host(ctx : Context, slug : String, entry : JSON::Any) : String?
+      given = entry["host"]?.try(&.as_s?) || ""
+      domain = ctx.system.config.domain.presence || ctx.param("domain").presence
+      expected = domain ? "#{slug}.#{domain}" : given
+      return unless given.empty? || given == expected
+      return expected if expected.empty?
+      expected.starts_with?("#{slug}.") && PartiduoAdmin::Protocol.valid_domain?(expected) ? expected : nil
     end
   end
 end
