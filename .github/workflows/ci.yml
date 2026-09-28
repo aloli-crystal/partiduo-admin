@@ -24,6 +24,13 @@ jobs:
         run: scripts/ci-checkout-deps.sh
       - name: Format
         run: crystal tool format --check src spec config scripts manage.cr
+      - name: Aucune mention du logiciel d'origine hors documentation
+        run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          if git grep -il 'noal[y]ss' -- . ':!*.adoc' ':!*.md'; then
+            echo "Mention interdite trouvée dans les fichiers ci-dessus." >&2
+            exit 1
+          fi
       - name: Shards
         run: shards install
       - name: Ameba
@@ -54,18 +61,22 @@ jobs:
       PGPASSWORD: partiduo
     steps:
       - uses: actions/checkout@v4
+      - name: Mémoire d'échange (la compilation des specs dépasse 6 Go)
+        run: |
+          sudo fallocate -l 12G /swap-ci && sudo chmod 600 /swap-ci
+          sudo mkswap /swap-ci && sudo swapon /swap-ci && free -h
       - uses: crystal-lang/install-crystal@v1
         with:
           crystal: 1.19.1
-      - name: Bibliothèques et outils PostgreSQL
+      - name: Bibliothèques de compilation et outils PostgreSQL
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends libyaml-dev libssl-dev libgmp-dev libpcre2-dev postgresql-client
+          sudo apt-get install -y --no-install-recommends libyaml-dev libssl-dev libgmp-dev libxml2-dev libpcre2-dev lld postgresql-client
       - name: Dépendances path (shards maison non publiés)
         run: scripts/ci-checkout-deps.sh
       - name: Shards
         run: shards install
       - name: Compilation (partiduo-admin, partiduo-admin-manage, partiduo-agent)
-        run: shards build --no-debug
+        run: shards build --no-debug --link-flags=-fuse-ld=lld
       - name: Specs
-        run: crystal spec --order random --no-debug
+        run: crystal spec --order random --no-debug --threads 1 --link-flags=-fuse-ld=lld
