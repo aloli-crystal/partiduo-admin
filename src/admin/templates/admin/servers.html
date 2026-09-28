@@ -1,0 +1,23 @@
+{# SPDX-License-Identifier: AGPL-3.0-or-later. Serveurs d'hébergement et leurs exécutants (ADR-008 D4). #}{% extend "admin/base.html" %}
+{% block title %}{% translate "admin.servers.title" %}{% endblock title %}
+{% block crumbs %}<li>{% translate "admin.servers.title" %}</li>{% endblock crumbs %}
+{% block heading %}{% translate "admin.servers.title" %}{% endblock heading %}
+{% block content %}
+{% if servers %}<div class="table-container"><table class="table is-fullwidth is-striped">
+  <caption class="is-sr-only">{% translate "admin.servers.title" %}</caption>
+  <thead><tr><th scope="col">{% translate "admin.servers.name" %}</th><th scope="col">{% translate "admin.servers.hostname" %}</th><th scope="col">{% translate "admin.servers.domain" %}</th><th scope="col">{% translate "admin.servers.agent" %}</th><th scope="col">{% translate "admin.servers.last_seen" %}</th><th scope="col">{% translate "admin.health.disk" %}</th><th scope="col"><span class="is-sr-only">{% translate "admin.actions.title" %}</span></th></tr></thead>
+  <tbody>{% for server in servers %}<tr><th scope="row">{{ server.name }}</th><td class="pd-mono">{{ server.hostname }}</td><td class="pd-mono">{{ server.domain }}</td><td>{{ server.agent_version|default:"—" }} {{ server.agent_mode }}</td><td>{% if server.last_seen_at %}{{ server.last_seen_at|time:"%Y-%m-%d %H:%M" }}{% else %}—{% endif %}</td><td>{{ server.disk_free_percent }}</td>
+    <td><form method="post" action="{% url 'server_rotate' id: server.id %}">{% csrf_input %}<button class="button is-small" type="submit">{% translate "admin.servers.rotate" %}<span class="is-sr-only"> {{ server.name }}</span></button></form></td></tr>{% endfor %}</tbody>
+</table></div>{% endif %}
+<form method="post" action="{% url 'servers' %}" class="pd-panel mt-4" novalidate>
+  <h2 class="title is-6">{% translate "admin.servers.new" %}</h2>
+  {% csrf_input %}
+  {% if errors %}<div class="notification is-danger is-light" role="alert">{% for field, messages in errors %}{% for message in messages %}<p>{{ message }}</p>{% endfor %}{% endfor %}</div>{% endif %}
+  <div class="pd-inline">
+    <div class="field"><label class="label" for="pd-server-name">{% translate "admin.servers.name" %}</label><div class="control"><input class="input pd-mono" id="pd-server-name" name="name" value="{{ name }}" required></div></div>
+    <div class="field"><label class="label" for="pd-server-host">{% translate "admin.servers.hostname" %}</label><div class="control"><input class="input pd-mono" id="pd-server-host" name="hostname" value="{{ hostname }}" required></div></div>
+    <div class="field"><label class="label" for="pd-server-domain">{% translate "admin.servers.domain" %}</label><div class="control"><input class="input pd-mono" id="pd-server-domain" name="domain" value="{{ domain }}" required></div></div>
+    <button class="button is-primary" type="submit">{% translate "admin.create" %}</button>
+  </div>
+</form>
+{% endblock content %}

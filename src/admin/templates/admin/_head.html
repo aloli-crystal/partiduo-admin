@@ -1,0 +1,10 @@
+{# SPDX-License-Identifier: AGPL-3.0-or-later. En-tête HTML commun : feuilles de style de la maquette, HTMX, jeton CSRF. #}
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="csrf-token" content="{% csrf_token %}">
+    <link rel="stylesheet" href="{% asset 'admin/css/fonts.css' %}">
+    <link rel="stylesheet" href="{% asset 'admin/css/bulma.min.css' %}">
+    <link rel="stylesheet" href="{% asset 'admin/css/theme.css' %}">
+    <link rel="stylesheet" href="{% asset 'admin/css/admin.css' %}">
+    <script src="{% asset 'admin/js/htmx.min.js' %}" defer></script>
+    <script src="{% asset 'admin/js/passkey.js' %}" defer></script>

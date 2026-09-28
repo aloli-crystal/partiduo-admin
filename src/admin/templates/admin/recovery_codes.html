@@ -1,0 +1,8 @@
+{# SPDX-License-Identifier: AGPL-3.0-or-later. Codes de récupération, affichés une seule fois (ADR-002 D7). #}{% extend "admin/auth_base.html" %}
+{% block title %}{% translate "admin.account.recovery_title" %}{% endblock title %}
+{% block content %}
+<h1 class="pd-auth-title">{% translate "admin.account.recovery_title" %}</h1>
+<p class="mb-3" role="status">{% translate "admin.account.recovery_once" %}</p>
+<ul class="pd-codes mb-4">{% for code in codes %}<li>{{ code }}</li>{% endfor %}</ul>
+<a class="button is-primary" href="{% url 'account' %}">{% translate "admin.account.continue" %}</a>
+{% endblock content %}

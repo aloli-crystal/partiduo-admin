@@ -1,0 +1,11 @@
+{# SPDX-License-Identifier: AGPL-3.0-or-later. File de tâches (ADR-008 D4). #}{% extend "admin/base.html" %}
+{% block title %}{% translate "admin.tasks.title" %}{% endblock title %}
+{% block crumbs %}<li>{% translate "admin.tasks.title" %}</li>{% endblock crumbs %}
+{% block heading %}{% translate "admin.tasks.title" %}{% endblock heading %}
+{% block content %}
+<form method="get" action="{% url 'tasks' %}" class="pd-inline mb-4">
+  <div class="field"><label class="label" for="pd-task-state">{% translate "admin.tasks.state" %}</label><div class="select"><select id="pd-task-state" name="state"><option value="">{% translate "admin.all" %}</option>{% for option in states %}<option value="{{ option.code }}"{% if option.code == state %} selected{% endif %}>{% translate option.key %}</option>{% endfor %}</select></div></div>
+  <button class="button" type="submit">{% translate "admin.filter" %}</button>
+</form>
+{% include "admin/_tasks_table.html" %}
+{% endblock content %}

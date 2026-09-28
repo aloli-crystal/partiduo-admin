@@ -1,0 +1,15 @@
+{# SPDX-License-Identifier: AGPL-3.0-or-later. Journal d'audit en ajout seul (ADR-008 D2). #}{% extend "admin/base.html" %}
+{% block title %}{% translate "admin.audit.title" %}{% endblock title %}
+{% block crumbs %}<li>{% translate "admin.audit.title" %}</li>{% endblock crumbs %}
+{% block heading %}{% translate "admin.audit.title" %}{% endblock heading %}
+{% block content %}
+<form method="get" action="{% url 'audit' %}" class="pd-inline mb-4">
+  <div class="field"><label class="label" for="pd-audit-action">{% translate "admin.audit.action" %}</label><div class="control"><input class="input" id="pd-audit-action" name="action" value="{{ action }}"></div></div>
+  <button class="button" type="submit">{% translate "admin.filter" %}</button>
+</form>
+{% if entries %}<div class="table-container"><table class="table is-fullwidth is-striped is-narrow">
+  <caption class="is-sr-only">{% translate "admin.audit.title" %}</caption>
+  <thead><tr><th scope="col">{% translate "admin.audit.at" %}</th><th scope="col">{% translate "admin.audit.actor" %}</th><th scope="col">{% translate "admin.audit.action" %}</th><th scope="col">{% translate "admin.audit.target" %}</th><th scope="col">{% translate "admin.audit.outcome" %}</th><th scope="col">{% translate "admin.audit.detail" %}</th></tr></thead>
+  <tbody>{% for entry in entries %}<tr><td class="pd-mono">{{ entry.created_at|time:"%Y-%m-%d %H:%M:%S" }}</td><td>{{ entry.actor_label }}</td><td class="pd-mono">{{ entry.action }}</td><td>{{ entry.target_type }} {{ entry.target_label }}</td><td>{{ entry.outcome }}</td><td class="pd-mono">{{ entry.detail }}</td></tr>{% endfor %}</tbody>
+</table></div>{% else %}<p class="pd-muted">{% translate "admin.audit.none" %}</p>{% endif %}
+{% endblock content %}

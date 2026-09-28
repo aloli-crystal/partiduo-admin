@@ -1,0 +1,12 @@
+{# SPDX-License-Identifier: AGPL-3.0-or-later. Donneurs d'ordre : qui commande et paie un dossier. #}{% extend "admin/base.html" %}
+{% block title %}{% translate "admin.payers.title" %}{% endblock title %}
+{% block crumbs %}<li>{% translate "admin.payers.title" %}</li>{% endblock crumbs %}
+{% block heading %}{% translate "admin.payers.title" %}{% endblock heading %}
+{% block actions %}<a class="button" href="{% url 'payer_dossiers' %}">{% translate "admin.payers.by_payer" %}</a>{% if can_edit %}<a class="button is-primary" href="{% url 'payer_new' %}">{% translate "admin.payers.new" %}</a>{% endif %}{% endblock actions %}
+{% block content %}
+{% if payers %}<div class="table-container"><table class="table is-fullwidth is-striped">
+  <caption class="is-sr-only">{% translate "admin.payers.title" %}</caption>
+  <thead><tr><th scope="col">{% translate "admin.payers.fields.name" %}</th><th scope="col">{% translate "admin.payers.fields.kind" %}</th><th scope="col">{% translate "admin.payers.fields.siren" %}</th><th scope="col">{% translate "admin.payers.billing_address" %}</th><th scope="col">{% translate "admin.payers.contact" %}</th><th scope="col">{% translate "admin.payers.fields.firm" %}</th>{% if can_edit %}<th scope="col"><span class="is-sr-only">{% translate "admin.actions.title" %}</span></th>{% endif %}</tr></thead>
+  <tbody>{% for payer in payers %}<tr><th scope="row">{{ payer.name }}</th><td>{% translate payer.kind_key %}</td><td class="pd-mono">{{ payer.siren|default:"—" }}</td><td>{{ payer.billing_address }}</td><td>{{ payer.contact_name }} {{ payer.contact_email }}</td><td>{{ payer.firm_name }}</td>{% if can_edit %}<td><a class="button is-small" href="{% url 'payer_edit' id: payer.id %}">{% translate "admin.edit" %}<span class="is-sr-only"> {{ payer.name }}</span></a></td>{% endif %}</tr>{% endfor %}</tbody>
+</table></div>{% else %}<p class="pd-muted">{% translate "admin.payers.none" %}</p>{% endif %}
+{% endblock content %}

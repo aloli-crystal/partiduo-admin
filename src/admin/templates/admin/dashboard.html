@@ -1,0 +1,31 @@
+{# SPDX-License-Identifier: AGPL-3.0-or-later. Tableau de bord du parc : dossiers par état, alertes, quota Let's Encrypt, validations en attente, dernières tâches. #}{% extend "admin/base.html" %}
+{% block title %}{% translate "admin.dashboard.title" %}{% endblock title %}
+{% block heading %}{% translate "admin.dashboard.title" %}{% endblock heading %}
+{% block content %}
+<section aria-labelledby="pd-counts-title" class="mb-5">
+  <h2 id="pd-counts-title" class="is-sr-only">{% translate "admin.dossiers.title" %}</h2>
+  <div class="pd-kpis">{% for item in counts %}<a class="pd-kpi" href="{% url 'dossiers' %}?state={{ item.state }}"><span>{% translate item.key %}</span><strong>{{ item.count }}</strong></a>{% endfor %}</div>
+</section>
+<div class="pd-grid">
+  <section class="pd-panel" aria-labelledby="pd-alerts-title">
+    <h2 id="pd-alerts-title">{% translate "admin.alerts.title" %}</h2>
+    {% if alerts %}<ul>{% for alert in alerts %}<li><span class="pd-state pd-state-{{ alert.severity }}">{% translate alert.kind_key %}</span> {{ alert.subject }} <span class="pd-muted">{{ alert.detail }}</span></li>{% endfor %}</ul>
+    {% else %}<p class="pd-muted">{% translate "admin.alerts.none" %}</p>{% endif %}
+  </section>
+  <section class="pd-panel" aria-labelledby="pd-quota-title">
+    <h2 id="pd-quota-title">{% translate "admin.quota.title" %}</h2>
+    {% if quota %}{% for usage in quota %}<p><span class="pd-mono">{{ usage.domain }}</span> : {{ usage.issued }} / {{ usage.limit }}</p>
+    <progress class="progress is-{{ usage.level }}" value="{{ usage.issued }}" max="{{ usage.limit }}" aria-label="{% translate 'admin.quota.title' %} {{ usage.domain }}">{{ usage.percent }} %</progress>{% endfor %}{% endif %}
+    <p class="help">{% translate "admin.quota.help" %}</p>
+  </section>
+  <section class="pd-panel" aria-labelledby="pd-approvals-title">
+    <h2 id="pd-approvals-title">{% translate "admin.approvals.title" %}</h2>
+    {% if approvals %}<ul>{% for approval in approvals %}<li><a href="{% url 'approvals' %}">{{ approval.reference }}</a> — {% translate approval.kind_key %} · {{ approval.dossier.slug }}</li>{% endfor %}</ul>
+    {% else %}<p class="pd-muted">{% translate "admin.approvals.none" %}</p>{% endif %}
+  </section>
+</div>
+<section class="pd-panel" aria-labelledby="pd-tasks-title">
+  <h2 id="pd-tasks-title">{% translate "admin.tasks.recent" %}</h2>
+  {% include "admin/_tasks_table.html" %}
+</section>
+{% endblock content %}

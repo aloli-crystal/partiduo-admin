@@ -1,0 +1,7 @@
+{# SPDX-License-Identifier: AGPL-3.0-or-later. Page d'erreur (403, 404). #}{% extend "admin/auth_base.html" %}
+{% block title %}{% translate title_key %}{% endblock title %}
+{% block content %}
+<h1 class="pd-auth-title">{% translate title_key %}</h1>
+<p class="mb-3">{% translate "admin.errors.http.help" %}</p>
+<a class="button" href="{% url 'dashboard' %}">{% translate "admin.dashboard.title" %}</a>
+{% endblock content %}

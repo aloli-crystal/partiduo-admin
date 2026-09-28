@@ -1,0 +1,46 @@
+name: partiduo-admin
+version: 0.1.0
+
+description: |
+  Administration du parc de dossiers Partiduo (ADR-008) : cabinets,
+  utilisateurs d'administration, donneurs d'ordre, inventaire des dossiers,
+  serveurs, file de tâches, sauvegardes, versions, supervision et journal
+  d'audit ; exécutant `partiduo-agent` installé sur chaque serveur. Aucun
+  accès aux données comptables des dossiers (ADR-008 D3).
+
+authors:
+  - Philippe Nénert <it+claude.ai@aloli.fr>
+
+crystal: ">= 1.19.1"
+
+license: AGPL-3.0-or-later
+
+targets:
+  partiduo-admin:
+    main: src/server.cr
+  partiduo-admin-manage:
+    main: manage.cr
+  partiduo-agent:
+    main: src/agent.cr
+
+dependencies:
+  marten:
+    path: ../../marten
+  pg:
+    github: will/crystal-pg
+  # Shards maison, en path: tant qu'ils ne sont pas publiés (ADR-002).
+  authn:
+    path: ../../authn
+  password-policy:
+    path: ../../password-policy
+  totp:
+    path: ../../totp
+  webauthn:
+    path: ../../webauthn
+  jose:
+    path: ../../jose
+
+development_dependencies:
+  ameba:
+    github: crystal-ameba/ameba
+    version: "~> 1.6"

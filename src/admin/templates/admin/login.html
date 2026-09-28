@@ -1,0 +1,28 @@
+{# SPDX-License-Identifier: AGPL-3.0-or-later. Connexion (ADR-002) : passkey d'abord (exigée du super-admin), mot de passe et second facteur ensuite. #}{% extend "admin/auth_base.html" %}
+{% block title %}{% translate "admin.login.title" %}{% endblock title %}
+{% block content %}
+<h1 class="pd-auth-title">{% translate "admin.login.title" %}</h1>
+{% if error %}<div class="notification is-danger is-light" role="alert" id="pd-login-error">{{ error }}</div>{% endif %}
+<section aria-labelledby="pd-passkey-title">
+  <h2 id="pd-passkey-title" class="title is-6">{% translate "admin.login.passkey_title" %}</h2>
+  <p class="pd-muted mb-2">{% translate "admin.login.passkey_help" %}</p>
+  <button type="button" class="button is-primary is-fullwidth" data-passkey="login" data-options-url="{% url 'login_passkey_options' %}"
+          data-submit-url="{% url 'login_passkey' %}" data-next="{{ next }}" data-status="pd-passkey-status">{% translate "admin.login.passkey_button" %}</button>
+  <p class="help" id="pd-passkey-status" role="status" aria-live="polite" data-unsupported="{% translate 'admin.passkey.unsupported' %}" data-failed="{% translate 'admin.passkey.failed' %}" data-waiting="{% translate 'admin.passkey.waiting' %}"></p>
+</section>
+<p class="pd-or">{% translate "admin.login.or" %}</p>
+<form method="post" action="{% url 'login' %}" novalidate aria-labelledby="pd-password-title">
+  {% csrf_input %}
+  <input type="hidden" name="next" value="{{ next }}">
+  <h2 id="pd-password-title" class="title is-6">{% translate "admin.login.password_title" %}</h2>
+  <div class="field">
+    <label class="label" for="pd-email">{% translate "admin.login.email" %}</label>
+    <div class="control"><input class="input" id="pd-email" name="email" type="email" value="{{ email }}" autocomplete="username webauthn" required{% if error %} aria-describedby="pd-login-error"{% endif %}></div>
+  </div>
+  <div class="field">
+    <label class="label" for="pd-password">{% translate "admin.login.password" %}</label>
+    <div class="control"><input class="input" id="pd-password" name="password" type="password" autocomplete="current-password" required></div>
+  </div>
+  <button class="button is-link" type="submit">{% translate "admin.login.submit" %}</button>
+</form>
+{% endblock content %}

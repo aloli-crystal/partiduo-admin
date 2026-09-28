@@ -1,0 +1,19 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Application d'administration (ADR-008 D1), derrière nginx sur admin.<domaine>.
+[Unit]
+Description=Partiduo — administration du parc
+After=network.target postgresql.service
+
+[Service]
+User=partiduo-admin
+EnvironmentFile=/etc/partiduo/admin.env
+Environment=MARTEN_ENV=production
+ExecStart=/opt/partiduo-admin/current/bin/partiduo-admin
+Restart=on-failure
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

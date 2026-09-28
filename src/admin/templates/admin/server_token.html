@@ -1,0 +1,11 @@
+{# SPDX-License-Identifier: AGPL-3.0-or-later. Jeton de l'exécutant, affiché une seule fois. #}{% extend "admin/base.html" %}
+{% block title %}{% translate "admin.servers.token_title" %}{% endblock title %}
+{% block crumbs %}<li><a href="{% url 'servers' %}">{% translate "admin.servers.title" %}</a></li><li>{{ server.name }}</li>{% endblock crumbs %}
+{% block heading %}{% translate "admin.servers.token_title" %}{% endblock heading %}
+{% block content %}
+<section class="pd-panel">
+  <p class="mb-3" role="status">{% translate "admin.servers.token_once" %}</p>
+  <p class="pd-token mb-3">{{ token }}</p>
+  <p class="help">{% translate "admin.servers.token_help" %}</p>
+</section>
+{% endblock content %}

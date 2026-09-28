@@ -1,0 +1,64 @@
+{# SPDX-License-Identifier: AGPL-3.0-or-later. Coquille de l'administration (charte de la maquette) : barre supérieure, menu latéral, zone de contenu. #}<!DOCTYPE html>
+<html lang="{{ locale }}">
+  <head>
+{% include "admin/_head.html" %}
+    <title>{% block title %}{% endblock title %} · {% translate "admin.brand" %}</title>
+  </head>
+  <body hx-headers='{"X-CSRF-Token": "{% csrf_token %}"}'>
+    <a class="pd-skip" href="#pd-main">{% translate "admin.shell.skip" %}</a>
+    <div class="pd-app">
+      <header class="pd-top">
+        <a class="pd-brand" href="{% url 'dashboard' %}"><b>Partiduo</b><small>{% translate "admin.shell.tagline" %}</small></a>
+        <span class="pd-grow"></span>
+        <form method="post" action="{% url 'language' %}">
+          {% csrf_input %}
+          <input type="hidden" name="next" value="{{ current_path }}">
+          <label class="is-sr-only" for="pd-lang">{% translate "admin.shell.language" %}</label>
+          <div class="select is-small"><select id="pd-lang" name="locale">{% for code in locales %}<option value="{{ code }}" lang="{{ code }}"{% if code == locale %} selected{% endif %}>{{ code|upcase }}</option>{% endfor %}</select></div>
+          <button class="button is-small" type="submit">{% translate "admin.shell.apply" %}</button>
+        </form>
+        {% if current_user %}
+        <span class="pd-user"><a href="{% url 'account' %}">{{ current_user.display_name }}</a> · {% translate current_user.role_key %}</span>
+        <form method="post" action="{% url 'logout' %}">{% csrf_input %}<button class="button is-small" type="submit">{% translate "admin.shell.logout" %}</button></form>
+        {% endif %}
+      </header>
+      <nav class="pd-side menu" aria-label="{% translate 'admin.shell.navigation' %}">
+        {% if elevated %}
+        <p class="menu-label" id="pd-menu-fleet">{% translate "admin.shell.menu.fleet" %}</p>
+        <ul class="menu-list" aria-labelledby="pd-menu-fleet">
+          <li><a href="{% url 'dashboard' %}">{% translate "admin.dashboard.title" %}</a></li>
+          <li><a href="{% url 'dossiers' %}">{% translate "admin.dossiers.title" %}</a></li>
+          <li><a href="{% url 'approvals' %}"><span>{% translate "admin.approvals.title" %}</span>{% if pending_approvals %}<span class="pd-count">{{ pending_approvals }}</span>{% endif %}</a></li>
+          <li><a href="{% url 'tasks' %}">{% translate "admin.tasks.title" %}</a></li>
+          <li><a href="{% url 'alerts' %}"><span>{% translate "admin.alerts.title" %}</span>{% if open_alerts %}<span class="pd-count">{{ open_alerts }}</span>{% endif %}</a></li>
+        </ul>
+        <p class="menu-label" id="pd-menu-ref">{% translate "admin.shell.menu.reference" %}</p>
+        <ul class="menu-list" aria-labelledby="pd-menu-ref">
+          <li><a href="{% url 'payers' %}">{% translate "admin.payers.title" %}</a></li>
+          <li><a href="{% url 'payer_dossiers' %}">{% translate "admin.payers.by_payer" %}</a></li>
+          {% if nav_admin %}<li><a href="{% url 'users' %}">{% translate "admin.users.title" %}</a></li>
+          <li><a href="{% url 'audit' %}">{% translate "admin.audit.title" %}</a></li>{% endif %}
+          {% if nav_fleet %}<li><a href="{% url 'firms' %}">{% translate "admin.firms.title" %}</a></li>
+          <li><a href="{% url 'servers' %}">{% translate "admin.servers.title" %}</a></li>
+          <li><a href="{% url 'releases' %}">{% translate "admin.releases.title" %}</a></li>{% endif %}
+        </ul>
+        {% endif %}
+        <p class="menu-label" id="pd-menu-account">{% translate "admin.shell.menu.account" %}</p>
+        <ul class="menu-list" aria-labelledby="pd-menu-account"><li><a href="{% url 'account' %}">{% translate "admin.account.title" %}</a></li></ul>
+      </nav>
+      <main class="pd-main" id="pd-main" tabindex="-1">
+        {% include "admin/_messages.html" %}
+        <div id="pd-content">
+          <div class="pd-head">
+            <div>
+              <nav class="pd-crumb" aria-label="{% translate 'admin.shell.breadcrumb' %}"><ol><li><a href="{% url 'dashboard' %}">{% translate "admin.brand" %}</a></li>{% block crumbs %}{% endblock crumbs %}</ol></nav>
+              <h1>{% block heading %}{% endblock heading %}</h1>
+            </div>
+            <div class="buttons pd-actions">{% block actions %}{% endblock actions %}</div>
+          </div>
+          {% block content %}{% endblock content %}
+        </div>
+      </main>
+    </div>
+  </body>
+</html>

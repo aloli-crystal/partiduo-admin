@@ -1,0 +1,2 @@
+{# SPDX-License-Identifier: AGPL-3.0-or-later. Messages d'une page à l'autre : erreurs et avertissements comme alertes, le reste poliment. #}{% if flash %}{% for kind, message in flash %}
+  <div class="notification is-light is-{{ kind }}" role="{% if kind == 'danger' %}alert{% elsif kind == 'warning' %}alert{% else %}status{% endif %}">{{ message }}</div>{% endfor %}{% endif %}

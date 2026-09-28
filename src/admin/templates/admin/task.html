@@ -1,0 +1,11 @@
+{# SPDX-License-Identifier: AGPL-3.0-or-later. Détail d'une tâche et journal renvoyé par l'exécutant, rafraîchi tant qu'elle court. #}{% extend "admin/base.html" %}
+{% block title %}{% translate "admin.tasks.task" %} {{ task.id }}{% endblock title %}
+{% block crumbs %}<li><a href="{% url 'tasks' %}">{% translate "admin.tasks.title" %}</a></li><li>{{ task.id }}</li>{% endblock crumbs %}
+{% block heading %}{% translate task.kind_key %} · {{ task.dossier_slug|default:"—" }}{% endblock heading %}
+{% block actions %}
+{% if can_retry %}<form method="post" action="{% url 'task_command' id: task.id, command: 'retry' %}">{% csrf_input %}<button class="button" type="submit">{% translate "admin.tasks.retry" %}</button></form>{% endif %}
+{% if can_cancel %}<form method="post" action="{% url 'task_command' id: task.id, command: 'cancel' %}">{% csrf_input %}<button class="button" type="submit">{% translate "admin.tasks.cancel" %}</button></form>{% endif %}
+{% endblock actions %}
+{% block content %}
+{% include "admin/_task_body.html" %}
+{% endblock content %}

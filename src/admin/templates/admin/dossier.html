@@ -1,0 +1,135 @@
+{# SPDX-License-Identifier: AGPL-3.0-or-later. Fiche d'un dossier : inventaire, supervision, actions du rôle (ADR-008 D5), sauvegardes, tâches, validations. Aucune donnée comptable (ADR-008 D3). #}{% extend "admin/base.html" %}
+{% block title %}{{ dossier.slug }}{% endblock title %}
+{% block crumbs %}<li><a href="{% url 'dossiers' %}">{% translate "admin.dossiers.title" %}</a></li><li>{{ dossier.slug }}</li>{% endblock crumbs %}
+{% block heading %}{{ dossier.label }} <span class="pd-state pd-state-{{ dossier.state }}">{% translate dossier.state_key %}</span>{% endblock heading %}
+{% block actions %}
+{% if can.modules %}<a class="button" href="{% url 'dossier_modules' id: dossier.id %}">{% translate "admin.dossiers.modules_title" %}</a>{% endif %}
+{% if can.backup %}<form method="post" action="{% url 'dossier_action' id: dossier.id, action: 'backup' %}">{% csrf_input %}<button class="button" type="submit">{% translate "admin.actions.backup" %}</button></form>{% endif %}
+{% if can.suspend %}<form method="post" action="{% url 'dossier_action' id: dossier.id, action: 'suspend' %}">{% csrf_input %}<button class="button is-warning" type="submit">{% translate "admin.actions.suspend" %}</button></form>{% endif %}
+{% if can.resume %}<form method="post" action="{% url 'dossier_action' id: dossier.id, action: 'resume' %}">{% csrf_input %}<button class="button is-success" type="submit">{% translate "admin.actions.resume" %}</button></form>{% endif %}
+{% if can.restore_archive %}<form method="post" action="{% url 'dossier_action' id: dossier.id, action: 'restore_archive' %}">{% csrf_input %}<button class="button is-success" type="submit">{% translate "admin.actions.restore_archive" %}</button></form>{% endif %}
+{% endblock actions %}
+{% block content %}
+{% if alerts %}<div class="notification is-danger is-light" role="alert"><ul>{% for alert in alerts %}<li>{% translate alert.kind_key %} {{ alert.detail }}</li>{% endfor %}</ul></div>{% endif %}
+<div class="pd-grid">
+  <section class="pd-panel" aria-labelledby="pd-inventory-title">
+    <h2 id="pd-inventory-title">{% translate "admin.dossiers.inventory" %}</h2>
+    <dl class="pd-dl">
+      <dt>{% translate "admin.dossiers.fields.host" %}</dt><dd class="pd-mono">{{ dossier.host }}</dd>
+      <dt>{% translate "admin.dossiers.fields.regime" %}</dt><dd>{{ dossier.regime|upcase }}</dd>
+      <dt>{% translate "admin.dossiers.fields.modules" %}</dt><dd>{{ dossier.modules }}</dd>
+      <dt>{% translate "admin.dossiers.fields.extensions" %}</dt><dd>{{ dossier.extensions|default:"—" }}</dd>
+      <dt>{% translate "admin.dossiers.fields.version" %}</dt><dd class="pd-mono">{{ dossier.version|default:"—" }}</dd>
+      <dt>{% translate "admin.dossiers.fields.server" %}</dt><dd>{{ dossier.server_name }}</dd>
+      <dt>{% translate "admin.dossiers.fields.database" %}</dt><dd class="pd-mono">{{ dossier.database|default:"—" }}</dd>
+      <dt>{% translate "admin.dossiers.fields.firm" %}</dt><dd>{{ dossier.firm_name }}</dd>
+      <dt>{% translate "admin.dossiers.fields.payer" %}</dt><dd>{{ dossier.payer_name }}</dd>
+      <dt>{% translate "admin.dossiers.fields.admin_email" %}</dt><dd>{{ dossier.admin_email }}</dd>
+      {% if dossier.retention_until %}<dt>{% translate "admin.dossiers.fields.retention_until" %}</dt><dd>{{ dossier.retention_until|time:"%Y-%m-%d" }}</dd>{% endif %}
+    </dl>
+  </section>
+  <section class="pd-panel" aria-labelledby="pd-health-title">
+    <h2 id="pd-health-title">{% translate "admin.dossiers.health" %}</h2>
+    <dl class="pd-dl">
+      <dt>{% translate "admin.health.service" %}</dt><dd>{{ dossier.service_state|default:"—" }}</dd>
+      <dt>{% translate "admin.health.database" %}</dt><dd>{{ dossier.database_state|default:"—" }}</dd>
+      <dt>{% translate "admin.health.certificate" %}</dt><dd>{% if dossier.cert_expires_at %}{{ dossier.cert_expires_at|time:"%Y-%m-%d" }}{% else %}—{% endif %}</dd>
+      <dt>{% translate "admin.health.last_backup" %}</dt><dd>{% if dossier.last_backup_at %}{{ dossier.last_backup_at|time:"%Y-%m-%d %H:%M" }}{% else %}—{% endif %}</dd>
+      <dt>{% translate "admin.health.checked_at" %}</dt><dd>{% if dossier.health_checked_at %}{{ dossier.health_checked_at|time:"%Y-%m-%d %H:%M" }}{% else %}—{% endif %}</dd>
+      <dt>{% translate "admin.dossiers.fields.backup_schedule" %}</dt><dd>{{ dossier.backup_schedule }} · {{ dossier.backup_retention_days }} j</dd>
+    </dl>
+  </section>
+</div>
+
+{% if can.upgrade %}
+<section class="pd-panel" aria-labelledby="pd-upgrade-title">
+  <h2 id="pd-upgrade-title">{% translate "admin.actions.upgrade" %}</h2>
+  {% if releases %}<form method="post" action="{% url 'dossier_action' id: dossier.id, action: 'upgrade' %}" class="pd-inline">
+    {% csrf_input %}
+    <div class="field"><label class="label" for="pd-release">{% translate "admin.releases.version" %}</label><div class="select"><select id="pd-release" name="release_id">{% for release in releases %}<option value="{{ release.id }}">{{ release.version }}</option>{% endfor %}</select></div></div>
+    <button class="button is-primary" type="submit">{% translate "admin.actions.upgrade" %}</button>
+  </form>
+  <p class="help">{% translate "admin.actions.upgrade_help" %}</p>{% else %}<p class="pd-muted">{% translate "admin.releases.none" %}</p>{% endif %}
+</section>
+{% endif %}
+
+{% if can.restore %}
+<section class="pd-panel" aria-labelledby="pd-restore-title">
+  <h2 id="pd-restore-title">{% translate "admin.actions.restore" %}</h2>
+  <form method="post" action="{% url 'dossier_restore' id: dossier.id %}" class="pd-inline">
+    {% csrf_input %}
+    <div class="field"><label class="label" for="pd-restore-date">{% translate "admin.restore.date" %}</label><div class="control"><input class="input" id="pd-restore-date" name="date" type="date" max="{{ today }}" required></div></div>
+    <div class="field"><label class="label" for="pd-restore-target">{% translate "admin.restore.target" %}</label><div class="select"><select id="pd-restore-target" name="target"><option value="new">{% translate "admin.restore.new" %}</option><option value="replace">{% translate "admin.restore.replace" %}</option></select></div></div>
+    <div class="field"><label class="label" for="pd-restore-slug">{% translate "admin.restore.new_slug" %}</label><div class="control"><input class="input pd-mono" id="pd-restore-slug" name="new_slug" type="text"></div></div>
+    <button class="button" type="submit">{% translate "admin.actions.restore" %}</button>
+  </form>
+  <p class="help">{% translate "admin.restore.help" %}</p>
+</section>
+{% endif %}
+
+<div class="pd-grid">
+  {% if can.archive %}
+  <section class="pd-panel" aria-labelledby="pd-archive-title">
+    <h2 id="pd-archive-title">{% translate "admin.actions.archive" %}</h2>
+    <p class="mb-2">{% translate "admin.actions.archive_help" %}</p>
+    <form method="post" action="{% url 'dossier_action' id: dossier.id, action: 'archive' %}">
+      {% csrf_input %}
+      <div class="field"><label class="label" for="pd-archive-reason">{% translate "admin.reason" %}</label><div class="control"><input class="input" id="pd-archive-reason" name="reason" type="text" required></div></div>
+      <button class="button is-warning" type="submit">{% translate "admin.actions.archive" %}</button>
+    </form>
+  </section>
+  {% endif %}
+  {% if can.access %}
+  <section class="pd-panel" aria-labelledby="pd-access-title">
+    <h2 id="pd-access-title">{% translate "admin.actions.access" %}</h2>
+    <p class="mb-2">{% translate "admin.actions.access_help" %}</p>
+    <form method="post" action="{% url 'dossier_request' id: dossier.id, kind: 'access' %}">
+      {% csrf_input %}
+      <div class="field"><label class="label" for="pd-access-email">{% translate "admin.dossiers.fields.admin_email" %}</label><div class="control"><input class="input" id="pd-access-email" name="email" type="email" value="{{ dossier.admin_email }}" required></div></div>
+      <div class="field"><label class="label" for="pd-access-reason">{% translate "admin.reason" %}</label><div class="control"><textarea class="textarea" id="pd-access-reason" name="reason" rows="2" required></textarea></div></div>
+      <button class="button" type="submit">{% translate "admin.approvals.request" %}</button>
+    </form>
+  </section>
+  {% endif %}
+  {% if can.delete %}
+  <section class="pd-panel" aria-labelledby="pd-delete-title">
+    <h2 id="pd-delete-title">{% translate "admin.actions.delete" %}</h2>
+    <p class="mb-2">{% translate "admin.actions.delete_help" %}</p>
+    <form method="post" action="{% url 'dossier_request' id: dossier.id, kind: 'delete' %}">
+      {% csrf_input %}
+      <div class="field"><label class="label" for="pd-delete-reason">{% translate "admin.reason" %}</label><div class="control"><textarea class="textarea" id="pd-delete-reason" name="reason" rows="2" required></textarea></div></div>
+      <button class="button is-danger" type="submit">{% translate "admin.approvals.request" %}</button>
+    </form>
+  </section>
+  {% endif %}
+  {% if can.assign %}{% if managers %}
+  <section class="pd-panel" aria-labelledby="pd-assign-title">
+    <h2 id="pd-assign-title">{% translate "admin.dossiers.managers" %}</h2>
+    <ul>{% for manager in managers %}<li class="mb-1">{{ manager.email }}
+      <form method="post" action="{% url 'dossier_assign' id: dossier.id %}">{% csrf_input %}<input type="hidden" name="manager_id" value="{{ manager.id }}">{% if manager.assigned %}<input type="hidden" name="command" value="remove"><button class="button is-small" type="submit">{% translate "admin.dossiers.unassign" %}<span class="is-sr-only"> {{ manager.email }}</span></button>{% else %}<button class="button is-small" type="submit">{% translate "admin.dossiers.assign" %}<span class="is-sr-only"> {{ manager.email }}</span></button>{% endif %}</form>
+    </li>{% endfor %}</ul>
+  </section>
+  {% endif %}{% endif %}
+</div>
+
+<section class="pd-panel" aria-labelledby="pd-backups-title">
+  <h2 id="pd-backups-title">{% translate "admin.backups.title" %}</h2>
+  {% if backups %}<div class="table-container"><table class="table is-fullwidth is-striped">
+    <caption class="is-sr-only">{% translate "admin.backups.title" %}</caption>
+    <thead><tr><th scope="col">{% translate "admin.backups.taken_at" %}</th><th scope="col">{% translate "admin.backups.kind" %}</th><th scope="col">{% translate "admin.backups.state" %}</th><th scope="col">{% translate "admin.backups.version" %}</th><th scope="col">{% translate "admin.backups.tested" %}</th><th scope="col"><span class="is-sr-only">{% translate "admin.actions.title" %}</span></th></tr></thead>
+    <tbody>{% for backup in backups %}<tr>
+      <td class="pd-mono">{% if backup.taken_at %}{{ backup.taken_at|time:"%Y-%m-%d %H:%M" }}{% else %}—{% endif %}</td>
+      <td>{% translate backup.kind_key %}{% if backup.frozen %} ({% translate "admin.backups.frozen" %}){% endif %}</td>
+      <td><span class="pd-state pd-state-{{ backup.state }}">{% translate backup.state_key %}</span></td>
+      <td class="pd-mono">{{ backup.version|default:"—" }}</td>
+      <td>{% if backup.test_restored_at %}{{ backup.test_restored_at|time:"%Y-%m-%d" }}{% else %}—{% endif %}</td>
+      <td>{% if can.backup %}{% if backup.path %}<form method="post" action="{% url 'backup_test' id: backup.id %}">{% csrf_input %}<button class="button is-small" type="submit">{% translate "admin.actions.test_restore" %}</button></form>{% endif %}{% endif %}</td>
+    </tr>{% endfor %}</tbody>
+  </table></div>{% else %}<p class="pd-muted">{% translate "admin.backups.none" %}</p>{% endif %}
+</section>
+
+<section class="pd-panel" aria-labelledby="pd-dossier-tasks-title">
+  <h2 id="pd-dossier-tasks-title">{% translate "admin.tasks.title" %}</h2>
+  {% include "admin/_tasks_table.html" %}
+</section>
+{% endblock content %}

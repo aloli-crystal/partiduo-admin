@@ -1,0 +1,14 @@
+{# SPDX-License-Identifier: AGPL-3.0-or-later. Dossiers par donneur d'ordre, base de la facturation future ; export CSV. #}{% extend "admin/base.html" %}
+{% block title %}{% translate "admin.payers.by_payer" %}{% endblock title %}
+{% block crumbs %}<li><a href="{% url 'payers' %}">{% translate "admin.payers.title" %}</a></li><li>{% translate "admin.payers.by_payer" %}</li>{% endblock crumbs %}
+{% block heading %}{% translate "admin.payers.by_payer" %}{% endblock heading %}
+{% block actions %}<a class="button is-primary" href="{% url 'payer_dossiers' %}?format=csv" download>{% translate "admin.payers.export_csv" %}</a>{% endblock actions %}
+{% block content %}
+{% if groups %}{% for group in groups %}
+<section class="pd-panel" aria-labelledby="pd-payer-{{ group.payer.id }}">
+  <h2 id="pd-payer-{{ group.payer.id }}">{{ group.payer.name }} <span class="pd-muted">({% translate group.payer.kind_key %})</span></h2>
+  <p class="pd-muted mb-2">{{ group.payer.billing_address }}{% if group.payer.siren %} · SIREN <span class="pd-mono">{{ group.payer.siren }}</span>{% endif %}</p>
+  <ul>{% for dossier in group.dossiers %}<li><a href="{% url 'dossier' id: dossier.id %}" class="pd-mono">{{ dossier.slug }}</a> — {{ dossier.label }} · <span class="pd-state pd-state-{{ dossier.state }}">{% translate dossier.state_key %}</span> · {{ dossier.modules }}</li>{% endfor %}</ul>
+</section>
+{% endfor %}{% else %}<p class="pd-muted">{% translate "admin.dossiers.none" %}</p>{% endif %}
+{% endblock content %}

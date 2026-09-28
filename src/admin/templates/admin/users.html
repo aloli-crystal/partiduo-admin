@@ -1,0 +1,20 @@
+{# SPDX-License-Identifier: AGPL-3.0-or-later. Utilisateurs d'administration de la portée (ADR-008 D2). #}{% extend "admin/base.html" %}
+{% block title %}{% translate "admin.users.title" %}{% endblock title %}
+{% block crumbs %}<li>{% translate "admin.users.title" %}</li>{% endblock crumbs %}
+{% block heading %}{% translate "admin.users.title" %}{% endblock heading %}
+{% block actions %}<a class="button is-primary" href="{% url 'user_new' %}">{% translate "admin.users.new" %}</a>{% endblock actions %}
+{% block content %}
+<div class="table-container"><table class="table is-fullwidth is-striped">
+  <caption class="is-sr-only">{% translate "admin.users.title" %}</caption>
+  <thead><tr><th scope="col">{% translate "admin.users.fields.email" %}</th><th scope="col">{% translate "admin.users.fields.name" %}</th><th scope="col">{% translate "admin.users.fields.role" %}</th><th scope="col">{% translate "admin.users.fields.firm" %}</th><th scope="col">{% translate "admin.users.fields.state" %}</th><th scope="col"><span class="is-sr-only">{% translate "admin.actions.title" %}</span></th></tr></thead>
+  <tbody>{% if rows %}{% for row in rows %}<tr>
+    <th scope="row">{{ row.user.email }}</th><td>{{ row.user.display_name }}</td><td>{% translate row.user.role_key %}</td><td>{{ row.user.firm_name|default:"—" }}</td>
+    <td>{% if row.user.active %}{% translate "admin.users.active" %}{% else %}{% translate "admin.users.inactive" %}{% endif %}{% if row.user.locked_at %} · {% translate "admin.users.locked" %}{% endif %}</td>
+    <td>{% if row.manage %}
+      <form method="post" action="{% url 'user_command' id: row.user.id, command: 'reinvite' %}">{% csrf_input %}<button class="button is-small" type="submit">{% translate "admin.users.reinvite" %}<span class="is-sr-only"> {{ row.user.email }}</span></button></form>
+      {% if row.user.locked_at %}<form method="post" action="{% url 'user_command' id: row.user.id, command: 'unlock' %}">{% csrf_input %}<button class="button is-small" type="submit">{% translate "admin.users.unlock" %}<span class="is-sr-only"> {{ row.user.email }}</span></button></form>{% endif %}
+      {% if row.user.active %}<form method="post" action="{% url 'user_command' id: row.user.id, command: 'disable' %}">{% csrf_input %}<button class="button is-small is-danger is-light" type="submit">{% translate "admin.users.disable" %}<span class="is-sr-only"> {{ row.user.email }}</span></button></form>{% else %}<form method="post" action="{% url 'user_command' id: row.user.id, command: 'enable' %}">{% csrf_input %}<button class="button is-small" type="submit">{% translate "admin.users.enable" %}<span class="is-sr-only"> {{ row.user.email }}</span></button></form>{% endif %}
+    {% endif %}</td>
+  </tr>{% endfor %}{% endif %}</tbody>
+</table></div>
+{% endblock content %}

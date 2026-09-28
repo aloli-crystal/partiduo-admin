@@ -1,0 +1,64 @@
+{# SPDX-License-Identifier: AGPL-3.0-or-later. Sécurité du compte (ADR-002 D6, ADR-008 D2) : niveau atteint et exigé, moyens enrôlés, élévation par passkey. #}{% extend "admin/base.html" %}
+{% block title %}{% translate "admin.account.title" %}{% endblock title %}
+{% block heading %}{% translate "admin.account.title" %}{% endblock heading %}
+{% block content %}
+<section class="pd-panel" aria-labelledby="pd-level-title">
+  <h2 id="pd-level-title">{% translate "admin.account.level_title" %}</h2>
+  <dl class="pd-dl">
+    <dt>{% translate "admin.account.email" %}</dt><dd>{{ account.email }}</dd>
+    <dt>{% translate "admin.account.role" %}</dt><dd>{% translate account.role_key %}{% if account.firm_name %} — {{ account.firm_name }}{% endif %}</dd>
+    <dt>{% translate "admin.account.level" %}</dt><dd>{{ level }} / {{ required }}</dd>
+  </dl>
+  {% if missing %}<div class="notification is-warning is-light mt-3" role="status"><p>{% translate "admin.account.missing" %}</p><ul>{% for item in missing %}<li>{% translate item %}</li>{% endfor %}</ul></div>{% endif %}
+</section>
+
+<section class="pd-panel" aria-labelledby="pd-passkeys-title">
+  <h2 id="pd-passkeys-title">{% translate "admin.account.passkeys" %}</h2>
+  {% if passkeys %}<ul class="mb-3">{% for key in passkeys %}<li>{{ key.name|default:"—" }} · {% translate "admin.account.added" %} {{ key.created_at|time:"%Y-%m-%d" }}</li>{% endfor %}</ul>{% endif %}
+  <div class="field">
+    <label class="label" for="pd-passkey-name">{% translate "admin.account.passkey_name" %}</label>
+    <div class="control"><input class="input" id="pd-passkey-name" type="text" maxlength="100"></div>
+  </div>
+  <div class="buttons">
+    <button type="button" class="button is-primary" data-passkey="register" data-options-url="{% url 'passkey_register_options' %}" data-submit-url="{% url 'passkey_register' %}" data-name-input="pd-passkey-name" data-status="pd-register-status">{% translate "admin.account.passkey_add" %}</button>
+    {% if passkeys %}<button type="button" class="button is-link" data-passkey="elevate" data-options-url="{% url 'elevate_options' %}" data-submit-url="{% url 'elevate' %}" data-status="pd-register-status">{% translate "admin.account.elevate" %}</button>{% endif %}
+  </div>
+  <p class="help" id="pd-register-status" role="status" aria-live="polite" data-unsupported="{% translate 'admin.passkey.unsupported' %}" data-failed="{% translate 'admin.passkey.failed' %}" data-waiting="{% translate 'admin.passkey.waiting' %}"></p>
+</section>
+
+{% if password_allowed %}
+<section class="pd-panel" aria-labelledby="pd-password-title">
+  <h2 id="pd-password-title">{% translate "admin.account.password_title" %}</h2>
+  <form method="post" action="{% url 'account_password' %}" class="pd-inline">
+    {% csrf_input %}
+    <div class="field"><label class="label" for="pd-new-password">{% translate "admin.account.new_password" %}</label><div class="control"><input class="input" id="pd-new-password" name="password" type="password" autocomplete="new-password" required aria-describedby="pd-password-help"></div></div>
+    <div class="field"><label class="label" for="pd-confirmation">{% translate "admin.account.confirmation" %}</label><div class="control"><input class="input" id="pd-confirmation" name="confirmation" type="password" autocomplete="new-password" required></div></div>
+    <button class="button" type="submit">{% translate "admin.save" %}</button>
+  </form>
+  <p class="help" id="pd-password-help">{% translate "admin.account.password_help" %}</p>
+</section>
+
+<section class="pd-panel" aria-labelledby="totp">
+  <h2 id="totp">{% translate "admin.account.totp_title" %}</h2>
+  {% if account.totp_enabled %}<p>{% translate "admin.account.totp_on" %}</p>
+  {% elsif totp_secret %}
+  <p class="mb-2">{% translate "admin.account.totp_scan" %}</p>
+  <p class="pd-token mb-2">{{ totp_secret }}</p>
+  <p class="help mb-3 pd-mono">{{ totp_uri }}</p>
+  <form method="post" action="{% url 'account_totp' %}" class="pd-inline">
+    {% csrf_input %}
+    <div class="field"><label class="label" for="pd-totp-code">{% translate "admin.login.code" %}</label><div class="control"><input class="input pd-mono" id="pd-totp-code" name="code" inputmode="numeric" autocomplete="one-time-code" required></div></div>
+    <button class="button is-primary" type="submit">{% translate "admin.account.totp_confirm" %}</button>
+  </form>
+  {% else %}
+  <form method="post" action="{% url 'account_totp' %}">{% csrf_input %}<input type="hidden" name="command" value="begin"><button class="button" type="submit">{% translate "admin.account.totp_begin" %}</button></form>
+  {% endif %}
+</section>
+{% endif %}
+
+<section class="pd-panel" aria-labelledby="pd-recovery-title">
+  <h2 id="pd-recovery-title">{% translate "admin.account.recovery_title" %}</h2>
+  <p class="mb-2">{% translate "admin.account.recovery_left" count: recovery_left %}</p>
+  {% if elevated %}<form method="post" action="{% url 'account_recovery_codes' %}">{% csrf_input %}<button class="button" type="submit">{% translate "admin.account.recovery_regenerate" %}</button></form>{% endif %}
+</section>
+{% endblock content %}

@@ -1,0 +1,12 @@
+{# SPDX-License-Identifier: AGPL-3.0-or-later. Tableau des tâches (variable tasks). #}{% if tasks %}<div class="table-container"><table class="table is-fullwidth is-striped">
+  <caption class="is-sr-only">{% translate "admin.tasks.title" %}</caption>
+  <thead><tr><th scope="col">#</th><th scope="col">{% translate "admin.tasks.kind" %}</th><th scope="col">{% translate "admin.tasks.dossier" %}</th><th scope="col">{% translate "admin.tasks.state" %}</th><th scope="col">{% translate "admin.tasks.requested_by" %}</th><th scope="col">{% translate "admin.tasks.created_at" %}</th></tr></thead>
+  <tbody>{% for task in tasks %}<tr>
+    <td><a href="{% url 'task' id: task.id %}">{{ task.id }}</a></td>
+    <td>{% translate task.kind_key %}</td>
+    <td>{{ task.dossier_slug|default:"—" }}</td>
+    <td><span class="pd-state pd-state-{{ task.state }}">{% translate task.state_key %}</span></td>
+    <td>{{ task.requested_by_label }}</td>
+    <td class="pd-mono">{{ task.created_at|time:"%Y-%m-%d %H:%M" }}</td>
+  </tr>{% endfor %}</tbody>
+</table></div>{% else %}<p class="pd-muted">{% translate "admin.tasks.none" %}</p>{% endif %}

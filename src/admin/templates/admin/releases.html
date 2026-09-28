@@ -1,0 +1,29 @@
+{# SPDX-License-Identifier: AGPL-3.0-or-later. Versions et montée de version par vagues (ADR-008 D5). #}{% extend "admin/base.html" %}
+{% block title %}{% translate "admin.releases.title" %}{% endblock title %}
+{% block crumbs %}<li>{% translate "admin.releases.title" %}</li>{% endblock crumbs %}
+{% block heading %}{% translate "admin.releases.title" %}{% endblock heading %}
+{% block content %}
+{% if releases %}<div class="table-container"><table class="table is-fullwidth is-striped">
+  <caption class="is-sr-only">{% translate "admin.releases.title" %}</caption>
+  <thead><tr><th scope="col">{% translate "admin.releases.version" %}</th><th scope="col">{% translate "admin.releases.notes" %}</th><th scope="col">{% translate "admin.releases.is_default" %}</th><th scope="col">{% translate "admin.waves.start" %}</th></tr></thead>
+  <tbody>{% for release in releases %}<tr><th scope="row" class="pd-mono">{{ release.version }}</th><td>{{ release.notes }}</td><td>{% if release.is_default %}{% translate "admin.yes_label" %}{% endif %}</td>
+    <td><form method="post" action="{% url 'wave_start' %}" class="pd-inline">{% csrf_input %}<input type="hidden" name="release_id" value="{{ release.id }}">
+      <div class="field"><label class="label is-small" for="pd-batch-{{ release.id }}">{% translate "admin.waves.batch_size" %}</label><div class="control"><input class="input is-small" id="pd-batch-{{ release.id }}" name="batch_size" type="number" min="1" max="100" value="5"></div></div>
+      <button class="button is-small" type="submit">{% translate "admin.waves.start" %}<span class="is-sr-only"> {{ release.version }}</span></button></form></td></tr>{% endfor %}</tbody>
+</table></div>{% endif %}
+<form method="post" action="{% url 'releases' %}" class="pd-panel mt-4">
+  <h2 class="title is-6">{% translate "admin.releases.new" %}</h2>
+  {% csrf_input %}
+  <div class="pd-inline">
+    <div class="field"><label class="label" for="pd-release-version">{% translate "admin.releases.version" %}</label><div class="control"><input class="input pd-mono" id="pd-release-version" name="version" required placeholder="0.2.0"></div></div>
+    <div class="field"><label class="label" for="pd-release-notes">{% translate "admin.releases.notes" %}</label><div class="control"><input class="input" id="pd-release-notes" name="notes"></div></div>
+    <label class="checkbox"><input type="checkbox" name="is_default" value="1"> {% translate "admin.releases.is_default" %}</label>
+    <button class="button is-primary" type="submit">{% translate "admin.create" %}</button>
+  </div>
+</form>
+<section class="pd-panel" aria-labelledby="pd-waves-title">
+  <h2 id="pd-waves-title">{% translate "admin.waves.title" %}</h2>
+  {% if waves %}<ul>{% for wave in waves %}<li>#{{ wave.id }} · {{ wave.release.version }} · {% translate "admin.waves.batch_size" %} {{ wave.batch_size }} · <span class="pd-state pd-state-{{ wave.state }}">{% translate wave.state_key %}</span></li>{% endfor %}</ul>{% else %}<p class="pd-muted">{% translate "admin.waves.none" %}</p>{% endif %}
+  <p class="help">{% translate "admin.waves.help" %}</p>
+</section>
+{% endblock content %}

@@ -1,0 +1,16 @@
+{# SPDX-License-Identifier: AGPL-3.0-or-later. Second facteur : code TOTP ou code de récupération (ADR-002 D2, D7). #}{% extend "admin/auth_base.html" %}
+{% block title %}{% translate "admin.login.second_factor" %}{% endblock title %}
+{% block content %}
+<h1 class="pd-auth-title">{% translate "admin.login.second_factor" %}</h1>
+{% if error %}<div class="notification is-danger is-light" role="alert" id="pd-code-error">{{ error }}</div>{% endif %}
+<form method="post" action="{% url 'second_factor' %}" novalidate>
+  {% csrf_input %}
+  <input type="hidden" name="next" value="{{ next }}">
+  <div class="field">
+    <label class="label" for="pd-code">{% translate "admin.login.code" %}</label>
+    <div class="control"><input class="input pd-mono" id="pd-code" name="code" type="text" inputmode="text" autocomplete="one-time-code" required aria-describedby="pd-code-help{% if error %} pd-code-error{% endif %}"></div>
+    <p class="help" id="pd-code-help">{% translate "admin.login.code_help" %}</p>
+  </div>
+  <button class="button is-link" type="submit">{% translate "admin.login.verify" %}</button>
+</form>
+{% endblock content %}

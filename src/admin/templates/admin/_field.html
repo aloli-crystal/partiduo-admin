@@ -1,0 +1,14 @@
+{# SPDX-License-Identifier: AGPL-3.0-or-later. Un champ de formulaire (PartiduoAdmin::FormField) : étiquette reliée, aide et erreurs annoncées, aria-invalid en cas d'erreur. #}{% if field.type == "checkboxes" %}<fieldset class="pd-fieldset"{% if field.describedby %} aria-describedby="{{ field.describedby }}"{% endif %}>
+  <legend>{{ field.label }}{% if field.required %}<span class="pd-required" aria-hidden="true"> *</span>{% endif %}</legend>
+  <div class="pd-checks">{% for option in field.options %}<label class="checkbox"><input type="checkbox" name="{{ field.name }}" value="{{ option.value }}"{% if option.selected %} checked{% endif %}> {{ option.label }}</label>{% endfor %}</div>
+  {% if field.help %}<p class="help" id="{{ field.help_id }}">{{ field.help }}</p>{% endif %}
+  {% if field.has_errors %}<p class="help is-danger" id="{{ field.error_id }}">{% for error in field.errors %}{{ error }} {% endfor %}</p>{% endif %}
+</fieldset>{% else %}<div class="field">
+  <label class="label" for="{{ field.id }}">{{ field.label }}{% if field.required %}<span class="pd-required" aria-hidden="true"> *</span>{% endif %}</label>
+  <div class="control">
+    {% if field.type == "select" %}<div class="select is-fullwidth"><select id="{{ field.id }}" name="{{ field.name }}"{% if field.required %} required{% endif %}{% if field.describedby %} aria-describedby="{{ field.describedby }}"{% endif %}{% if field.has_errors %} aria-invalid="true"{% endif %}>{% for option in field.options %}<option value="{{ option.value }}"{% if option.selected %} selected{% endif %}>{{ option.label }}</option>{% endfor %}</select></div>
+    {% else %}<input class="input" type="{{ field.type }}" id="{{ field.id }}" name="{{ field.name }}" value="{{ field.value }}"{% if field.required %} required{% endif %}{% if field.describedby %} aria-describedby="{{ field.describedby }}"{% endif %}{% if field.has_errors %} aria-invalid="true"{% endif %}>{% endif %}
+  </div>
+  {% if field.help %}<p class="help" id="{{ field.help_id }}">{{ field.help }}</p>{% endif %}
+  {% if field.has_errors %}<p class="help is-danger" id="{{ field.error_id }}">{% for error in field.errors %}{{ error }} {% endfor %}</p>{% endif %}
+</div>{% endif %}

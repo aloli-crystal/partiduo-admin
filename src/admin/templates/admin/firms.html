@@ -1,0 +1,18 @@
+{# SPDX-License-Identifier: AGPL-3.0-or-later. Cabinets comptables (ADR-008 D2), gérés par le super-admin. #}{% extend "admin/base.html" %}
+{% block title %}{% translate "admin.firms.title" %}{% endblock title %}
+{% block crumbs %}<li>{% translate "admin.firms.title" %}</li>{% endblock crumbs %}
+{% block heading %}{% translate "admin.firms.title" %}{% endblock heading %}
+{% block content %}
+{% if firms %}<ul class="pd-panel">{% for firm in firms %}<li>{{ firm.name }}{% if firm.siren %} · <span class="pd-mono">{{ firm.siren }}</span>{% endif %}{% if firm.email %} · {{ firm.email }}{% endif %}</li>{% endfor %}</ul>{% endif %}
+<form method="post" action="{% url 'firms' %}" class="pd-panel" novalidate>
+  <h2 class="title is-6">{% translate "admin.firms.new" %}</h2>
+  {% csrf_input %}
+  {% if errors %}<div class="notification is-danger is-light" role="alert">{% for field, messages in errors %}{% for message in messages %}<p>{{ message }}</p>{% endfor %}{% endfor %}</div>{% endif %}
+  <div class="pd-inline">
+    <div class="field"><label class="label" for="pd-firm-name">{% translate "admin.firms.name" %}</label><div class="control"><input class="input" id="pd-firm-name" name="name" value="{{ name }}" required></div></div>
+    <div class="field"><label class="label" for="pd-firm-siren">{% translate "admin.payers.fields.siren" %}</label><div class="control"><input class="input pd-mono" id="pd-firm-siren" name="siren" value="{{ siren }}" inputmode="numeric"></div></div>
+    <div class="field"><label class="label" for="pd-firm-email">{% translate "admin.users.fields.email" %}</label><div class="control"><input class="input" id="pd-firm-email" name="email" type="email" value="{{ email }}"></div></div>
+    <button class="button is-primary" type="submit">{% translate "admin.create" %}</button>
+  </div>
+</form>
+{% endblock content %}

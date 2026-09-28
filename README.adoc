@@ -1,0 +1,119 @@
+= partiduo-admin
+:toc: left
+:toc-title: Table des matières
+:icons: font
+
+Administration du parc de dossiers Partiduo (ADR-008 de `partiduo-docs`) :
+une application Marten séparée, avec sa propre base, qui gère le *cycle de
+vie* des dossiers sans jamais entrer dans leurs données comptables
+(ADR-008 D3), et `partiduo-agent`, l'exécutant installé sur chaque serveur
+d'hébergement (ADR-008 D4).
+
+Licence : AGPL-3.0-or-later (voir `LICENSE`).
+
+== Contenu
+
+[cols="1,3",options="header"]
+|===
+|Binaire |Rôle
+
+|`partiduo-admin` (`src/server.cr`)
+|Interface HTMX + Bulma (charte et `theme.css` de la maquette), fr/en/nl,
+servie sur `admin.<domaine>` ; API de l'exécutant `/api/agent/v1/…`.
+
+|`partiduo-admin-manage` (`manage.cr`)
+|Ligne de commande Marten : `migrate`, `bootstrap` (premier super-admin
+par invitation), `schedule` (planification, toutes les 15 minutes).
+
+|`partiduo-agent` (`src/agent.cr`)
+|Exécutant : tire ses tâches en HTTPS avec le jeton du serveur, liste
+fermée de types traduits en appels à `partiduo-provision` et à
+`partiduo-manage instance` (contrat `doc/api/instance-cli.adoc` de
+partiduo-app), tâches idempotentes et reprenables, journal renvoyé.
+|===
+
+== Modèle
+
+* *Cabinets*, *utilisateurs d'administration* et trois rôles (ADR-008 D2) :
+  super-admin (tout le parc, passkey exigée), admin de cabinet (son cabinet),
+  gestionnaire de dossiers (dossiers confiés) ; *affectations*.
+* *Donneurs d'ordre* : qui commande et paie un dossier (cabinet, la société
+  elle-même, autre payeur) — identité, SIREN, adresse de facturation,
+  contact. La facturation (tarifs, périodes, factures) est hors périmètre ;
+  la vue « dossiers par donneur d'ordre » s'exporte en CSV.
+* *Dossiers* (inventaire) : sous-domaine, régime, modules, extensions,
+  serveur, version, état, cabinet gestionnaire, donneur d'ordre obligatoire.
+* *Serveurs* (jeton d'exécutant en empreinte), *tâches*, *vagues* de
+  montée de version, *sauvegardes*, *versions*, *doubles validations*,
+  *alertes*, *certificats émis* (quota Let's Encrypt) et *journal d'audit*
+  en ajout seul (déclencheur PostgreSQL).
+
+Les droits par rôle sont tous dans `src/admin/services/access.cr`.
+
+== Actions (ADR-008 D5)
+
+Créer ; modifier modules et extensions ; suspendre ; réactiver ; archiver
+(sauvegarde figée vérifiée, conservation dix ans) ; restaurer l'archive ;
+supprimer définitivement après la durée légale avec double validation ;
+sauvegardes planifiées, rétention, restauration à une date (instance neuve
+ou remplacement), restauration test ; montée de version par dossier ou par
+vagues avec sauvegarde préalable et retour arrière ; supervision (service,
+base, certificat et échéance, quota Let's Encrypt, disque, dernière
+sauvegarde, exécutant silencieux) avec alertes à l'écran et par courriel ;
+recours d'accès par réémission de l'invitation d'administrateur avec double
+validation.
+
+== Modes de l'exécutant
+
+`dry-run` (à blanc)::
+Rien n'est exécuté : état simulé, chaque geste écrit au journal. Specs et
+répétitions.
+
+`local`::
+Machine de développement : vraies bases `partiduo_adm_*` (toute autre base
+est refusée), vrais `partiduo-provision`, `pg_dump`, `pg_restore`, `tar` ;
+ni vhost, ni systemd, ni Let's Encrypt — les fichiers de service sont
+produits dans `--work-dir`, l'arrêt d'un service est un fichier témoin.
+
+`production`::
+Serveur d'hébergement : `sudo -n` limité par `deploy/partiduo-agent.sudoers`,
+instance appelée sous son compte système avec son fichier d'environnement.
+
+== Développement
+
+[source,sh]
+----
+SKIP_MARTEN_CLI_PRECOMPILATION=1 shards install
+createdb --encoding=UTF8 partiduo_admin
+crystal run manage.cr -- migrate
+crystal run manage.cr -- bootstrap --email=vous@exemple.fr   # affiche le lien d'invitation
+MARTEN_ENV=development crystal run src/server.cr             # http://127.0.0.1:8200
+
+# Exécutant local (jeton affiché à la création du serveur dans l'interface)
+crystal build src/agent.cr -o bin/partiduo-agent
+bin/partiduo-agent --admin-url http://127.0.0.1:8200 --token-file jeton.txt --mode local \
+  --manage ../partiduo-app/bin/partiduo-manage --provision ../partiduo-app/bin/partiduo-provision \
+  --pg-socket /tmp --backup-dir /tmp/partiduo-backups --state-dir /tmp/partiduo-agent
+----
+
+Specs (base propre, dont le nom contient `test`) :
+
+[source,sh]
+----
+createdb --encoding=UTF8 partiduo_admin_test
+DATABASE_URL='postgres:///partiduo_admin_test?host=/tmp' crystal spec --order random
+crystal tool format --check src spec config scripts manage.cr
+crystal build lib/ameba/bin/ameba.cr -o bin/ameba && bin/ameba
+----
+
+== Exploitation
+
+`deploy/` : unités systemd de l'application, de la planification (minuteur
+de 15 minutes) et de l'exécutant, et règles sudoers de l'exécutant.
+Variables : `DATABASE_URL`, `MARTEN_SECRET_KEY`, `PARTIDUO_DOMAIN`
+(`partiduo.app`), `PARTIDUO_ADMIN_HOST`, `PARTIDUO_ADMIN_URL`,
+`PARTIDUO_ADMIN_MAIL_FROM`, `PARTIDUO_ADMIN_ALERTS_TO`,
+`PARTIDUO_ADMIN_ASSETS_ROOT`.
+
+Décisions et blocages : `../partiduo-app/DECISIONS.adoc` (`D-ADM-…`) et
+`../partiduo-app/BLOCAGES.adoc` (`B-ADM-…`).

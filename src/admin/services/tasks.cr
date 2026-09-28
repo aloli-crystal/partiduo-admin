@@ -1,0 +1,135 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
+require "json"
+
+module PartiduoAdmin
+  # File de tâches (ADR-008 D4). L'application web n'a aucun privilège
+  # système : elle enregistre des tâches, que l'exécutant de chaque serveur
+  # tire, exécute et rend.
+  module Tasks
+    alias Params = Hash(String, JSON::Any)
+
+    # Taille maximale du journal conservé par tâche (les lignes les plus
+    # anciennes sont gardées : elles disent ce qui a été fait).
+    LOG_LIMIT = 200_000
+
+    def self.any(value) : JSON::Any
+      JSON.parse(value.to_json)
+    end
+
+    # Enregistre une tâche. Idempotence côté admin : une tâche identique
+    # (même type, même dossier, mêmes paramètres) encore en attente ou en
+    # cours est rendue au lieu d'en créer une seconde.
+    def self.enqueue(kind : String, server : Server, params : Params, requested_by : User? = nil,
+                     dossier : Dossier? = nil, wave : Wave? = nil, wave_rank : Int32? = nil,
+                     requested_by_label : String? = nil) : Task
+      raise ArgumentError.new("type de tâche inconnu : #{kind}") unless Protocol.valid_kind?(kind)
+      serialized = params.to_json
+      existing = Task.filter(kind: kind, server_id: server.pk, state__in: %w[pending running], params: serialized)
+      existing = dossier ? existing.filter(dossier_id: dossier.pk) : existing.filter(dossier_id__isnull: true)
+      if task = existing.first
+        return task
+      end
+      task = Task.create!(kind: kind, server: server, dossier: dossier, params: serialized,
+        requested_by_id: requested_by.try(&.pk), requested_by_label: requested_by_label || requested_by.try(&.email.to_s) || "system",
+        wave: wave, wave_rank: wave_rank)
+      Audit.log(requested_by, "task.enqueue", target: task,
+        detail: {"kind" => kind, "dossier" => dossier.try(&.slug).to_s}, actor_label: requested_by ? nil : "system")
+      task
+    end
+
+    # Paramètres communs à toute tâche portant sur un dossier.
+    def self.dossier_params(dossier : Dossier) : Params
+      {
+        "slug"       => any(dossier.slug),
+        "host"       => any(dossier.host),
+        "domain"     => any(dossier.server.try(&.domain) || Config.domain),
+        "database"   => any(dossier.database),
+        "modules"    => any(dossier.module_list),
+        "extensions" => any(dossier.extension_list),
+        "version"    => any(dossier.version),
+      }
+    end
+
+    # Réclamation par l'exécutant d'un serveur : sa plus ancienne tâche en
+    # attente, ou une tâche en cours dont le bail a expiré (coupure : la
+    # tâche est reprise, ADR-008 D4). `FOR UPDATE SKIP LOCKED` : deux
+    # exécutants ne prennent jamais la même tâche.
+    CLAIM_SQL = <<-SQL
+      UPDATE admin_task
+         SET state = 'running', attempts = attempts + 1, claimed_at = $2, lease_until = $3,
+             started_at = COALESCE(started_at, $2), updated_at = $2
+       WHERE id = (
+         SELECT id FROM admin_task
+          WHERE server_id = $1
+            AND (state = 'pending' OR (state = 'running' AND lease_until < $2))
+          ORDER BY id
+          FOR UPDATE SKIP LOCKED
+          LIMIT 1)
+      RETURNING id
+      SQL
+
+    def self.claim(server : Server, now : Time = Config.now) : Task?
+      lease = now + Protocol::LEASE_SECONDS.seconds
+      id = Marten::DB::Connection.default.open do |db|
+        db.query_one?(CLAIM_SQL, server.pk!.as(Int64), now, lease, as: Int64)
+      end
+      id ? Task.get!(id: id) : nil
+    end
+
+    # Compte rendu intermédiaire : lignes de journal, bail prolongé.
+    def self.report(task : Task, lines : Array(String), now : Time = Config.now) : Nil
+      append_log(task, lines)
+      task.lease_until = now + Protocol::LEASE_SECONDS.seconds if task.state == "running"
+      task.save!
+    end
+
+    # Fin de tâche : état, résultat, erreur, puis effets sur l'inventaire.
+    def self.finish(task : Task, ok : Bool, result : JSON::Any, error : String = "",
+                    lines = [] of String, now : Time = Config.now) : Nil
+      return if task.finished
+      append_log(task, lines)
+      task.state = ok ? "succeeded" : "failed"
+      task.finished_at = now
+      task.lease_until = nil
+      task.result = Effects.sanitize(task, result).to_json
+      task.error = error[0, 4000]? || ""
+      task.save!
+      Audit.log(nil, "task.#{task.state}", target: task,
+        detail: {"kind" => task.kind.to_s, "dossier" => task.dossier_slug, "error" => task.error.to_s},
+        outcome: ok ? "ok" : "fail", actor_label: "agent:#{task.server.try(&.name)}")
+      Effects.apply(task, ok, result, now)
+    end
+
+    # Rejouer une tâche échouée : même type, mêmes paramètres ; les étapes
+    # déjà faites sont sautées par l'exécutant (tâches idempotentes).
+    def self.retry(user : User, task : Task) : Bool
+      return false unless task.state == "failed"
+      task.state = "pending"
+      task.finished_at = nil
+      task.error = ""
+      task.save!
+      if dossier = task.dossier
+        dossier.state = "active" if dossier.state == "error" && task.kind != "instance.create"
+        dossier.save!
+      end
+      Audit.log(user, "task.retry", target: task)
+      true
+    end
+
+    def self.cancel(user : User, task : Task) : Bool
+      return false unless task.state == "pending"
+      task.state = "cancelled"
+      task.finished_at = Config.now
+      task.save!
+      Audit.log(user, "task.cancel", target: task)
+      true
+    end
+
+    private def self.append_log(task : Task, lines : Array(String)) : Nil
+      return if lines.empty?
+      log = task.log.to_s + lines.map { |line| line.gsub(/[\r\n]+/, " ") + "\n" }.join
+      task.log = log.size > LOG_LIMIT ? log[0, LOG_LIMIT] : log
+    end
+  end
+end

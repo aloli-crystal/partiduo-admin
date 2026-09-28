@@ -1,0 +1,21 @@
+{# SPDX-License-Identifier: AGPL-3.0-or-later. Corps du détail d'une tâche ; se recharge toutes les 5 s tant qu'elle n'est pas terminée. #}<div id="pd-task"{% if not task.finished %} hx-get="{% url 'task' id: task.id %}" hx-trigger="every 5s" hx-swap="outerHTML"{% endif %}>
+  <section class="pd-panel" aria-labelledby="pd-task-title">
+    <h2 id="pd-task-title">{% translate "admin.tasks.task" %} {{ task.id }}</h2>
+    <dl class="pd-dl">
+      <dt>{% translate "admin.tasks.state" %}</dt><dd><span class="pd-state pd-state-{{ task.state }}" role="status">{% translate task.state_key %}</span></dd>
+      <dt>{% translate "admin.tasks.attempts" %}</dt><dd>{{ task.attempts }}</dd>
+      <dt>{% translate "admin.tasks.requested_by" %}</dt><dd>{{ task.requested_by_label }}</dd>
+      <dt>{% translate "admin.tasks.created_at" %}</dt><dd class="pd-mono">{{ task.created_at|time:"%Y-%m-%d %H:%M:%S" }}</dd>
+      {% if task.finished_at %}<dt>{% translate "admin.tasks.finished_at" %}</dt><dd class="pd-mono">{{ task.finished_at|time:"%Y-%m-%d %H:%M:%S" }}</dd>{% endif %}
+      {% if task.error %}<dt>{% translate "admin.tasks.error" %}</dt><dd>{{ task.error }}</dd>{% endif %}
+    </dl>
+  </section>
+  <section class="pd-panel" aria-labelledby="pd-log-title">
+    <h2 id="pd-log-title">{% translate "admin.tasks.log" %}</h2>
+    <pre class="pd-log" tabindex="0">{{ task.log|default:"—" }}</pre>
+  </section>
+  <section class="pd-panel" aria-labelledby="pd-result-title">
+    <h2 id="pd-result-title">{% translate "admin.tasks.result" %}</h2>
+    <pre class="pd-log" tabindex="0">{{ result }}</pre>
+  </section>
+</div>

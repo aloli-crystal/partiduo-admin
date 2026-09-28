@@ -1,0 +1,9 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# /etc/sudoers.d/partiduo-agent — commandes permises à l'exécutant (ADR-008 D4).
+# Aucune commande arbitraire : l'exécutant n'appelle que celles-ci, avec des
+# arguments validés (sous-domaine, version, chemins sous /var/backups/partiduo).
+partiduo-agent ALL=(partiduo) NOPASSWD: /bin/sh -c set -a && . "$1" && set +a && shift && exec env *, /bin/ln -sfn /opt/partiduo/releases/* /opt/partiduo/instances/*
+partiduo-agent ALL=(root) NOPASSWD: /bin/systemctl start partiduo-*.service, /bin/systemctl stop partiduo-*.service, \
+  /bin/systemctl disable --now partiduo-*.service, /bin/systemctl daemon-reload, /bin/systemctl reload nginx, \
+  /bin/sh INSTALL.txt, /usr/bin/test -f /etc/letsencrypt/live/*, /usr/bin/openssl x509 -enddate -noout -in /etc/letsencrypt/live/*, \
+  /usr/bin/certbot delete --cert-name * --non-interactive, /bin/cat /etc/partiduo/*.env, /bin/rm -f /etc/systemd/system/partiduo-*

@@ -1,0 +1,71 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+#
+# CI de partiduo-admin : format, Ameba, compilation des trois binaires
+# (administration, ligne de commande, exécutant), specs sur PostgreSQL.
+name: CI
+
+on:
+  push:
+    branches: [development, production]
+  pull_request:
+
+env:
+  CRYSTAL_VERSION: "1.19.1"
+  SKIP_MARTEN_CLI_PRECOMPILATION: "1"
+
+jobs:
+  qualite:
+    name: Format, Ameba
+    runs-on: ubuntu-latest
+    container: crystallang/crystal:1.19.1
+    steps:
+      - uses: actions/checkout@v4
+      - name: Dépendances path (shards maison non publiés)
+        run: scripts/ci-checkout-deps.sh
+      - name: Format
+        run: crystal tool format --check src spec config scripts manage.cr
+      - name: Shards
+        run: shards install
+      - name: Ameba
+        run: mkdir -p bin && crystal build lib/ameba/bin/ameba.cr -o bin/ameba && bin/ameba
+
+  specs:
+    name: Compilation et specs
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:18
+        ports:
+          - 5432:5432
+        env:
+          POSTGRES_USER: partiduo
+          POSTGRES_PASSWORD: partiduo
+          POSTGRES_DB: partiduo_admin_test
+        options: >-
+          --health-cmd "pg_isready -U partiduo"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      # En CI seulement, PostgreSQL est un service joignable en TCP.
+      DATABASE_URL: postgres://partiduo:partiduo@localhost:5432/partiduo_admin_test
+      PGHOST: localhost
+      PGUSER: partiduo
+      PGPASSWORD: partiduo
+    steps:
+      - uses: actions/checkout@v4
+      - uses: crystal-lang/install-crystal@v1
+        with:
+          crystal: 1.19.1
+      - name: Bibliothèques et outils PostgreSQL
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libyaml-dev libssl-dev libgmp-dev libpcre2-dev postgresql-client
+      - name: Dépendances path (shards maison non publiés)
+        run: scripts/ci-checkout-deps.sh
+      - name: Shards
+        run: shards install
+      - name: Compilation (partiduo-admin, partiduo-admin-manage, partiduo-agent)
+        run: shards build --no-debug
+      - name: Specs
+        run: crystal spec --order random --no-debug

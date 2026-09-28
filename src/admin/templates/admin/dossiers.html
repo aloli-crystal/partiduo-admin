@@ -1,0 +1,23 @@
+{# SPDX-License-Identifier: AGPL-3.0-or-later. Inventaire des dossiers de la portée de l'utilisateur (ADR-008 D2). #}{% extend "admin/base.html" %}
+{% block title %}{% translate "admin.dossiers.title" %}{% endblock title %}
+{% block crumbs %}<li>{% translate "admin.dossiers.title" %}</li>{% endblock crumbs %}
+{% block heading %}{% translate "admin.dossiers.title" %}{% endblock heading %}
+{% block actions %}{% if can_create %}<a class="button is-primary" href="{% url 'dossier_new' %}">{% translate "admin.dossiers.new" %}</a>{% endif %}{% endblock actions %}
+{% block content %}
+<form method="get" action="{% url 'dossiers' %}" class="pd-inline mb-4" role="search">
+  <div class="field"><label class="label" for="pd-q">{% translate "admin.search" %}</label><div class="control"><input class="input" id="pd-q" name="q" type="search" value="{{ q }}"></div></div>
+  <div class="field"><label class="label" for="pd-state">{% translate "admin.dossiers.fields.state" %}</label><div class="select"><select id="pd-state" name="state"><option value="">{% translate "admin.all" %}</option>{% for option in states %}<option value="{{ option.code }}"{% if option.code == state %} selected{% endif %}>{% translate option.key %}</option>{% endfor %}</select></div></div>
+  <button class="button" type="submit">{% translate "admin.filter" %}</button>
+</form>
+{% if dossiers %}<div class="table-container"><table class="table is-fullwidth is-striped">
+  <caption class="is-sr-only">{% translate "admin.dossiers.title" %}</caption>
+  <thead><tr><th scope="col">{% translate "admin.dossiers.fields.slug" %}</th><th scope="col">{% translate "admin.dossiers.fields.label" %}</th><th scope="col">{% translate "admin.dossiers.fields.regime" %}</th><th scope="col">{% translate "admin.dossiers.fields.modules" %}</th><th scope="col">{% translate "admin.dossiers.fields.version" %}</th><th scope="col">{% translate "admin.dossiers.fields.state" %}</th><th scope="col">{% translate "admin.dossiers.fields.firm" %}</th><th scope="col">{% translate "admin.dossiers.fields.payer" %}</th></tr></thead>
+  <tbody>{% for dossier in dossiers %}<tr>
+    <th scope="row"><a href="{% url 'dossier' id: dossier.id %}" class="pd-mono">{{ dossier.slug }}</a></th>
+    <td>{{ dossier.label }}</td><td>{{ dossier.regime|upcase }}</td><td>{{ dossier.modules }}{% if dossier.extensions %} + {{ dossier.extensions }}{% endif %}</td>
+    <td class="pd-mono">{{ dossier.version|default:"—" }}</td>
+    <td><span class="pd-state pd-state-{{ dossier.state }}">{% translate dossier.state_key %}</span></td>
+    <td>{{ dossier.firm_name }}</td><td>{{ dossier.payer_name }}</td>
+  </tr>{% endfor %}</tbody>
+</table></div>{% else %}<p class="pd-muted">{% translate "admin.dossiers.none" %}</p>{% endif %}
+{% endblock content %}

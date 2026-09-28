@@ -1,0 +1,12 @@
+{# SPDX-License-Identifier: AGPL-3.0-or-later. Modules et extensions d'un dossier (ADR-006 D2 : désactiver conserve les données). #}{% extend "admin/base.html" %}
+{% block title %}{% translate "admin.dossiers.modules_title" %}{% endblock title %}
+{% block crumbs %}<li><a href="{% url 'dossiers' %}">{% translate "admin.dossiers.title" %}</a></li><li><a href="{% url 'dossier' id: dossier.id %}">{{ dossier.slug }}</a></li>{% endblock crumbs %}
+{% block heading %}{% translate "admin.dossiers.modules_title" %}{% endblock heading %}
+{% block content %}
+<form method="post" action="{% url 'dossier_modules' id: dossier.id %}" class="pd-panel" novalidate>
+  {% csrf_input %}
+  {% include "admin/_base_errors.html" %}
+  {% for field in fields %}{% include "admin/_field.html" %}{% endfor %}
+  <button class="button is-primary" type="submit">{% translate "admin.save" %}</button>
+</form>
+{% endblock content %}

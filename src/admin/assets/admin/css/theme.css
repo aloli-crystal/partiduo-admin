@@ -1,0 +1,112 @@
+/* SPDX-License-Identifier: AGPL-3.0-or-later
+   Partiduo — thème de partiduo-ui-bulma (ADR-005 D5), repris tel quel par partiduo-admin (ADR-008 D1).
+   Toute la charte tient ici : changer de couleurs ou de polices ne touche aucun gabarit. */
+
+:root {
+  /* Couleur principale : bleu pétrole, encre de registre */
+  --bulma-primary-h: 192deg;
+  --bulma-primary-s: 76%;
+  --bulma-primary-l: 25%;
+  /* Texte des boutons `is-primary` : blanc sur le bleu pétrole foncé (Bulma
+     le calcule d'après sa couleur par défaut, claire : texte presque noir,
+     contraste 2:1 — WCAG 1.4.3). */
+  --bulma-primary-invert-l: 100%;
+  --bulma-link-h: 192deg;
+  --bulma-link-s: 70%;
+  --bulma-link-l: 32%;
+  --bulma-success-h: 146deg;
+  --bulma-success-s: 46%;
+  --bulma-success-l: 33%;
+  --bulma-danger-h: 0deg;
+  --bulma-danger-s: 51%;
+  --bulma-danger-l: 46%;
+  --bulma-warning-h: 38deg;
+  --bulma-warning-s: 100%;
+  --bulma-warning-l: 40%;
+
+  --bulma-family-primary: "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
+  --bulma-family-code: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+  --bulma-radius: .375rem;
+  --bulma-radius-small: .25rem;
+
+  /* Jetons propres à Partiduo */
+  --pd-ground: #f3f6f7;
+  --pd-surface: #ffffff;
+  --pd-sidebar: #0f3d49;
+  --pd-sidebar-text: #cfe2e7;
+  --pd-sidebar-active: #ffffff;
+  --pd-sidebar-active-bg: rgba(255, 255, 255, .12);
+  --pd-ink: #1b2a30;
+  --pd-muted: #5b6b70;
+  --pd-rule: #dce3e4;
+  --pd-row-alt: #f8fafa;
+  --pd-debit: #1b2a30;
+  --pd-ok: #2e7d4f;
+  --pd-ok-bg: #e5f3ea;
+  --pd-gap: #b23a3a;
+  --pd-gap-bg: #f9e7e7;
+  --pd-warn: #8a5700;
+  --pd-warn-bg: #fdf1dc;
+  --pd-focus: #1c8aa5;
+  /* Texte sur fond --bulma-primary (onglet courant, page courante) : 4,5:1 au
+     moins dans les deux thèmes (WCAG 1.4.3). */
+  --pd-on-primary: #ffffff;
+  /* Indicateur de focus sur le menu latéral foncé (WCAG 1.4.11). */
+  --pd-focus-on-dark: #7fd0e2;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --bulma-primary-l: 52%;
+    --bulma-primary-invert-l: 6%;
+    --bulma-link-l: 62%;
+    --bulma-success-l: 48%;
+    --bulma-danger-l: 62%;
+    --bulma-warning-l: 55%;
+    --pd-ground: #0f1719;
+    --pd-surface: #152125;
+    --pd-sidebar: #0b2a32;
+    --pd-sidebar-text: #a9c4cb;
+    --pd-ink: #e3eced;
+    --pd-muted: #93a6ab;
+    --pd-rule: #26363b;
+    --pd-row-alt: #182629;
+    --pd-debit: #e3eced;
+    --pd-ok: #6fcf97;
+    --pd-ok-bg: #173226;
+    --pd-gap: #f08a8a;
+    --pd-gap-bg: #3a1e1e;
+    --pd-warn: #f2b85a;
+    --pd-warn-bg: #3a2d14;
+    --pd-focus: #5cc3dc;
+    --pd-on-primary: #0f1719;
+  }
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bulma-primary-l: 52%;
+  --bulma-primary-invert-l: 6%;
+  --bulma-link-l: 62%;
+  --bulma-success-l: 48%;
+  --bulma-danger-l: 62%;
+  --bulma-warning-l: 55%;
+  --pd-ground: #0f1719;
+  --pd-surface: #152125;
+  --pd-sidebar: #0b2a32;
+  --pd-sidebar-text: #a9c4cb;
+  --pd-ink: #e3eced;
+  --pd-muted: #93a6ab;
+  --pd-rule: #26363b;
+  --pd-row-alt: #182629;
+  --pd-debit: #e3eced;
+  --pd-ok: #6fcf97;
+  --pd-ok-bg: #173226;
+  --pd-gap: #f08a8a;
+  --pd-gap-bg: #3a1e1e;
+  --pd-warn: #f2b85a;
+  --pd-warn-bg: #3a2d14;
+  --pd-focus: #5cc3dc;
+  --pd-on-primary: #0f1719;
+}

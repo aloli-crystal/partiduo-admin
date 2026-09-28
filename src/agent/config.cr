@@ -1,0 +1,114 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
+require "option_parser"
+require "uri"
+
+module PartiduoAgent
+  VERSION = "0.1.0"
+
+  # Modes de l'exécutant :
+  #
+  # * `dry-run` (à blanc) : rien n'est exécuté ; chaque geste est simulé et
+  #   inscrit au journal renvoyé à l'admin (specs, répétition) ;
+  # * `local` : développement — opère réellement sur des bases
+  #   `partiduo_adm_*` de la machine, sans vhost, systemd ni Let's Encrypt :
+  #   les fichiers de service sont produits dans `work_dir` ;
+  # * `production` : serveur d'hébergement (sudo, systemctl, certbot).
+  enum Mode
+    DryRun
+    Local
+    Production
+
+    def label : String
+      case self
+      in DryRun     then "dry-run"
+      in Local      then "local"
+      in Production then "production"
+      end
+    end
+
+    def self.parse(value : String) : Mode
+      case value
+      when "dry-run", "dry_run", "dryrun" then DryRun
+      when "local"                        then Local
+      when "production"                   then Production
+      else                                     raise ArgumentError.new("mode inconnu : #{value} (dry-run, local, production)")
+      end
+    end
+  end
+
+  class Config
+    property admin_url : String = ENV["PARTIDUO_ADMIN_URL"]? || "https://admin.partiduo.app"
+    property token : String = ENV["PARTIDUO_AGENT_TOKEN"]? || ""
+    property mode : Mode = Mode::DryRun
+    property state_dir : String = ENV["PARTIDUO_AGENT_STATE"]? || "/var/lib/partiduo-agent"
+    property work_dir : String = File.join(Dir.tempdir, "partiduo-agent")
+    property backup_dir : String = "/var/backups/partiduo"
+    property manage : String = ENV["PARTIDUO_MANAGE"]? || "/opt/partiduo/current/bin/partiduo-manage"
+    property provision : String = ENV["PARTIDUO_PROVISION"]? || "/opt/partiduo/current/bin/partiduo-provision"
+    property releases_dir : String = "/opt/partiduo/releases"
+    property install_root : String = "/opt/partiduo"
+    property etc_dir : String = "/etc/partiduo"
+    property system_user : String = "partiduo"
+    property pg_socket : String = "/var/run/postgresql"
+    property acme_email : String = ""
+    property acme_staging : Bool = false
+    property poll_interval : Time::Span = 15.seconds
+    property once : Bool = false
+    # À blanc : fait échouer la première opération dont le nom contient
+    # cette valeur (specs du retour arrière et de la reprise).
+    property fail_on : String? = nil
+
+    def self.parse(args : Array(String)) : Config
+      config = new
+      token_file = nil
+      OptionParser.parse(args) do |parser|
+        parser.banner = "Usage : partiduo-agent [options]\n\nExécutant de partiduo-admin (ADR-008 D4)."
+        parser.on("--admin-url URL", "adresse de l'administration (HTTPS)") { |value| config.admin_url = value }
+        parser.on("--token-file FICHIER", "fichier du jeton du serveur") { |value| token_file = value }
+        parser.on("--mode MODE", "dry-run, local ou production (défaut : dry-run)") { |value| config.mode = Mode.parse(value) }
+        parser.on("--state-dir RÉP", "état des tâches en cours (reprise)") { |value| config.state_dir = value }
+        parser.on("--work-dir RÉP", "mode local : fichiers produits") { |value| config.work_dir = value }
+        parser.on("--backup-dir RÉP", "répertoire des sauvegardes") { |value| config.backup_dir = value }
+        parser.on("--manage CHEMIN", "partiduo-manage de la version courante") { |value| config.manage = value }
+        parser.on("--provision CHEMIN", "partiduo-provision") { |value| config.provision = value }
+        parser.on("--releases-dir RÉP", "versions installées (<version>/bin/partiduo-manage)") { |value| config.releases_dir = value }
+        parser.on("--install-root RÉP", "racine d'installation (production)") { |value| config.install_root = value }
+        parser.on("--etc-dir RÉP", "fichiers d'environnement des instances") { |value| config.etc_dir = value }
+        parser.on("--system-user NOM", "compte système des instances") { |value| config.system_user = value }
+        parser.on("--pg-socket RÉP", "socket PostgreSQL") { |value| config.pg_socket = value }
+        parser.on("--acme-email ADRESSE", "compte ACME") { |value| config.acme_email = value }
+        parser.on("--acme-staging", "autorité de test de Let's Encrypt") { config.acme_staging = true }
+        parser.on("--poll SECONDES", "intervalle d'interrogation") { |value| config.poll_interval = value.to_i.seconds }
+        parser.on("--once", "traite au plus une tâche puis s'arrête") { config.once = true }
+        parser.on("-h", "--help", "cette aide") do
+          puts parser
+          exit 0
+        end
+      end
+      if file = token_file
+        config.token = File.read(file).strip
+      end
+      config.validate!
+      config
+    end
+
+    def validate! : Nil
+      raise ArgumentError.new("jeton manquant (--token-file ou PARTIDUO_AGENT_TOKEN)") if token.empty?
+      uri = URI.parse(admin_url)
+      host = uri.host.to_s
+      local = host == "127.0.0.1" || host == "localhost" || host.ends_with?(".localhost")
+      # HTTPS obligatoire (ADR-008 D4), sauf vers la machine elle-même.
+      raise ArgumentError.new("l'administration doit être jointe en HTTPS : #{admin_url}") unless uri.scheme == "https" || local
+      raise ArgumentError.new("le mode production exige HTTPS") if mode.production? && uri.scheme != "https"
+    end
+
+    def local? : Bool
+      mode.local?
+    end
+
+    def production? : Bool
+      mode.production?
+    end
+  end
+end

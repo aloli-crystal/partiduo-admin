@@ -1,0 +1,14 @@
+# Configuration d'Ameba pour partiduo-admin.
+Globs:
+  - "**/*.cr"
+  - "!lib"
+  - "!tmp"
+
+Excluded:
+  - lib/
+  - tmp/
+
+# Objets exposés aux gabarits Marten : un attribut booléen s'appelle sans `?`
+# pour être lu dans un gabarit (même règle que partiduo-ui-bulma, D-UI-016).
+Naming/QueryBoolMethods:
+  Enabled: false

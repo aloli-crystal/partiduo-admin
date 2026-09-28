@@ -1,0 +1,1 @@
+{# SPDX-License-Identifier: AGPL-3.0-or-later. Erreurs d'ensemble d'un formulaire, annoncées comme alerte. #}{% if base_errors %}<div class="notification is-danger is-light" role="alert" id="pd-form-errors">{% for error in base_errors %}<p>{{ error }}</p>{% endfor %}</div>{% endif %}

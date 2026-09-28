@@ -1,0 +1,12 @@
+{# SPDX-License-Identifier: AGPL-3.0-or-later. Donneur d'ordre : identité, SIREN, adresse de facturation, contact. #}{% extend "admin/base.html" %}
+{% block title %}{% if payer %}{{ payer.name }}{% else %}{% translate "admin.payers.new" %}{% endif %}{% endblock title %}
+{% block crumbs %}<li><a href="{% url 'payers' %}">{% translate "admin.payers.title" %}</a></li>{% endblock crumbs %}
+{% block heading %}{% if payer %}{{ payer.name }}{% else %}{% translate "admin.payers.new" %}{% endif %}{% endblock heading %}
+{% block content %}
+<form method="post" action="{{ action }}" class="pd-panel" novalidate>
+  {% csrf_input %}
+  {% include "admin/_base_errors.html" %}
+  {% for field in fields %}{% include "admin/_field.html" %}{% endfor %}
+  <button class="button is-primary" type="submit">{% translate "admin.save" %}</button>
+</form>
+{% endblock content %}

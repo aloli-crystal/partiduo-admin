@@ -1,0 +1,27 @@
+{# SPDX-License-Identifier: AGPL-3.0-or-later. Pages d'authentification : carte centrée, sans menu. #}<!DOCTYPE html>
+<html lang="{{ locale }}">
+  <head>
+{% include "admin/_head.html" %}
+    <title>{% block title %}{% endblock title %} · {% translate "admin.brand" %}</title>
+  </head>
+  <body class="pd-auth-body">
+    <a class="pd-skip" href="#pd-main">{% translate "admin.shell.skip" %}</a>
+    <header class="pd-top">
+      <span class="pd-brand"><b>Partiduo</b><small>{% translate "admin.shell.tagline" %}</small></span>
+      <span class="pd-grow"></span>
+      <form method="post" action="{% url 'language' %}">
+        {% csrf_input %}
+        <input type="hidden" name="next" value="{{ current_path }}">
+        <label class="is-sr-only" for="pd-lang">{% translate "admin.shell.language" %}</label>
+        <div class="select is-small"><select id="pd-lang" name="locale">{% for code in locales %}<option value="{{ code }}" lang="{{ code }}"{% if code == locale %} selected{% endif %}>{{ code|upcase }}</option>{% endfor %}</select></div>
+        <button class="button is-small" type="submit">{% translate "admin.shell.apply" %}</button>
+      </form>
+    </header>
+    <main class="pd-auth" id="pd-main" tabindex="-1">
+      <div class="pd-auth-card">
+        {% include "admin/_messages.html" %}
+        {% block content %}{% endblock content %}
+      </div>
+    </main>
+  </body>
+</html>

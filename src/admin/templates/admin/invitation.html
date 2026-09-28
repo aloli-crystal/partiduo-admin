@@ -1,0 +1,14 @@
+{# SPDX-License-Identifier: AGPL-3.0-or-later. Invitation : l'utilisateur confirme, puis enrôle ses moyens d'authentification. #}{% extend "admin/auth_base.html" %}
+{% block title %}{% translate "admin.invitation.title" %}{% endblock title %}
+{% block content %}
+<h1 class="pd-auth-title">{% translate "admin.invitation.title" %}</h1>
+{% if invalid %}
+<p role="alert">{% translate "admin.invitation.invalid" %}</p>
+{% else %}
+<p class="mb-3">{% translate "admin.invitation.intro" email: invited.email %}</p>
+<form method="post" action="{% url 'invitation' token: token %}">
+  {% csrf_input %}
+  <button class="button is-primary" type="submit">{% translate "admin.invitation.accept" %}</button>
+</form>
+{% endif %}
+{% endblock content %}

@@ -1,0 +1,10 @@
+# Force les sources locales des shards que d'autres dépendances déclarent en
+# github: (authn -> password-policy, webauthn -> jose), comme partiduo-app
+# (DECISIONS D-003).
+dependencies:
+  marten:
+    path: ../../marten
+  password-policy:
+    path: ../../password-policy
+  jose:
+    path: ../../jose
