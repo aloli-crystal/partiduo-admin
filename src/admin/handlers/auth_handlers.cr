@@ -124,14 +124,17 @@ module PartiduoAdmin
       current = user
       secret = current.totp_pending_secret
       page("admin/account.html", {
-        "account"          => current,
-        "level"            => level,
-        "required"         => Auth.required_level(current),
-        "missing"          => Auth.missing(current).map { |item| "admin.account.missing_items.#{item}" },
-        "passkeys"         => Passkey.filter(user_id: current.pk).order("created_at").to_a,
-        "recovery_left"    => Auth::RecoveryCodes.remaining(current),
-        "totp_secret"      => secret || "",
-        "totp_uri"         => secret ? Auth::Totp.provisioning_uri(current, secret) : "",
+        "account"       => current,
+        "level"         => level,
+        "required"      => Auth.required_level(current),
+        "missing"       => Auth.missing(current).map { |item| "admin.account.missing_items.#{item}" },
+        "passkeys"      => Passkey.filter(user_id: current.pk).order("created_at").to_a,
+        "recovery_left" => Auth::RecoveryCodes.remaining(current),
+        # `nil` et non "" : une chaîne vide est vraie dans un gabarit Marten
+        # (seuls nil, false et 0 sont faux) ; le bouton « activer » ne
+        # s'affichait jamais.
+        "totp_secret"      => secret,
+        "totp_uri"         => secret ? Auth::Totp.provisioning_uri(current, secret) : nil,
         "enrollment"       => level == Auth::ENROLLMENT,
         "password_allowed" => !current.super_admin?,
       })

@@ -10,7 +10,7 @@
 {% if can.restore_archive %}<form method="post" action="{% url 'dossier_action' id: dossier.id, action: 'restore_archive' %}">{% csrf_input %}<button class="button is-success" type="submit">{% translate "admin.actions.restore_archive" %}</button></form>{% endif %}
 {% endblock actions %}
 {% block content %}
-{% if alerts %}<div class="notification is-danger is-light" role="alert"><ul>{% for alert in alerts %}<li>{% translate alert.kind_key %} {{ alert.detail }}</li>{% endfor %}</ul></div>{% endif %}
+{% if alerts %}<div class="notification is-danger is-light" role="alert"><ul>{% for alert in alerts %}<li>{% translate alert.kind_key %} {{ alert.detail_text }}</li>{% endfor %}</ul></div>{% endif %}
 <div class="pd-grid">
   <section class="pd-panel" aria-labelledby="pd-inventory-title">
     <h2 id="pd-inventory-title">{% translate "admin.dossiers.inventory" %}</h2>
@@ -31,12 +31,12 @@
   <section class="pd-panel" aria-labelledby="pd-health-title">
     <h2 id="pd-health-title">{% translate "admin.dossiers.health" %}</h2>
     <dl class="pd-dl">
-      <dt>{% translate "admin.health.service" %}</dt><dd>{{ dossier.service_state|default:"—" }}</dd>
-      <dt>{% translate "admin.health.database" %}</dt><dd>{{ dossier.database_state|default:"—" }}</dd>
+      <dt>{% translate "admin.health.service" %}</dt><dd>{% if dossier.service_state_key %}{% translate dossier.service_state_key %}{% else %}—{% endif %}</dd>
+      <dt>{% translate "admin.health.database" %}</dt><dd>{% if dossier.database_state_key %}{% translate dossier.database_state_key %}{% else %}—{% endif %}</dd>
       <dt>{% translate "admin.health.certificate" %}</dt><dd>{% if dossier.cert_expires_at %}{{ dossier.cert_expires_at|time:"%Y-%m-%d" }}{% else %}—{% endif %}</dd>
       <dt>{% translate "admin.health.last_backup" %}</dt><dd>{% if dossier.last_backup_at %}{{ dossier.last_backup_at|time:"%Y-%m-%d %H:%M" }}{% else %}—{% endif %}</dd>
       <dt>{% translate "admin.health.checked_at" %}</dt><dd>{% if dossier.health_checked_at %}{{ dossier.health_checked_at|time:"%Y-%m-%d %H:%M" }}{% else %}—{% endif %}</dd>
-      <dt>{% translate "admin.dossiers.fields.backup_schedule" %}</dt><dd>{{ dossier.backup_schedule }} · {{ dossier.backup_retention_days }} j</dd>
+      <dt>{% translate "admin.dossiers.fields.backup_schedule" %}</dt><dd>{% translate dossier.schedule_key %} · {{ dossier.backup_retention_days }} j</dd>
     </dl>
   </section>
 </div>
@@ -123,7 +123,7 @@
       <td><span class="pd-state pd-state-{{ backup.state }}">{% translate backup.state_key %}</span></td>
       <td class="pd-mono">{{ backup.version|default:"—" }}</td>
       <td>{% if backup.test_restored_at %}{{ backup.test_restored_at|time:"%Y-%m-%d" }}{% else %}—{% endif %}</td>
-      <td>{% if can.backup %}{% if backup.path %}<form method="post" action="{% url 'backup_test' id: backup.id %}">{% csrf_input %}<button class="button is-small" type="submit">{% translate "admin.actions.test_restore" %}</button></form>{% endif %}{% endif %}</td>
+      <td>{% if can.backup %}{% if backup.path != "" %}<form method="post" action="{% url 'backup_test' id: backup.id %}">{% csrf_input %}<button class="button is-small" type="submit">{% translate "admin.actions.test_restore" %}</button></form>{% endif %}{% endif %}</td>
     </tr>{% endfor %}</tbody>
   </table></div>{% else %}<p class="pd-muted">{% translate "admin.backups.none" %}</p>{% endif %}
 </section>

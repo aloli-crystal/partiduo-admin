@@ -164,6 +164,13 @@ nl:
       last_backup: "Laatste back-up"
       checked_at: "Laatste meting"
       disk: "Vrije schijfruimte"
+      states:
+        running: "actief"
+        stopped: "gestopt"
+        ok: "bereikbaar"
+        unavailable: "onbereikbaar"
+        error: "fout"
+        unknown: "onbekend"
     actions:
       title: "Acties"
       backup: "Back-up maken"
@@ -357,6 +364,7 @@ nl:
       agent: "Uitvoerder"
       last_seen: "Laatste contact"
       rotate: "Nieuw token"
+      rotate_confirm: "Een nieuw token trekt dat van de uitvoerder van deze server onmiddellijk in. Doorgaan?"
       token_title: "Token van de uitvoerder"
       token_once: "Dit token wordt niet meer getoond. Kopieer het in het tokenbestand van partiduo-agent op de server."
       token_help: "De uitvoerder toont het bij elke oproep (Authorization: Bearer). Een nieuw token trekt het vorige in."

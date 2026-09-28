@@ -9,7 +9,7 @@
 <div class="pd-grid">
   <section class="pd-panel" aria-labelledby="pd-alerts-title">
     <h2 id="pd-alerts-title">{% translate "admin.alerts.title" %}</h2>
-    {% if alerts %}<ul>{% for alert in alerts %}<li><span class="pd-state pd-state-{{ alert.severity }}">{% translate alert.kind_key %}</span> {{ alert.subject }} <span class="pd-muted">{{ alert.detail }}</span></li>{% endfor %}</ul>
+    {% if alerts %}<ul>{% for alert in alerts %}<li><span class="pd-state pd-state-{{ alert.severity }}">{% translate alert.kind_key %}</span> {{ alert.subject }} <span class="pd-muted">{{ alert.detail_text }}</span></li>{% endfor %}</ul>
     {% else %}<p class="pd-muted">{% translate "admin.alerts.none" %}</p>{% endif %}
   </section>
   <section class="pd-panel" aria-labelledby="pd-quota-title">

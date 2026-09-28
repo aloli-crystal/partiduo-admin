@@ -6,7 +6,7 @@
 {% if alerts %}<div class="table-container"><table class="table is-fullwidth is-striped">
   <caption class="is-sr-only">{% translate "admin.alerts.title" %}</caption>
   <thead><tr><th scope="col">{% translate "admin.alerts.kind" %}</th><th scope="col">{% translate "admin.alerts.subject" %}</th><th scope="col">{% translate "admin.alerts.detail" %}</th><th scope="col">{% translate "admin.alerts.opened_at" %}</th></tr></thead>
-  <tbody>{% for alert in alerts %}<tr><td><span class="pd-state pd-state-{{ alert.severity }}">{% translate alert.kind_key %}</span></td><td>{{ alert.subject }}</td><td>{{ alert.detail }}</td><td class="pd-mono">{{ alert.opened_at|time:"%Y-%m-%d %H:%M" }}</td></tr>{% endfor %}</tbody>
+  <tbody>{% for alert in alerts %}<tr><td><span class="pd-state pd-state-{{ alert.severity }}">{% translate alert.kind_key %}</span></td><td>{{ alert.subject }}</td><td>{{ alert.detail_text }}</td><td class="pd-mono">{{ alert.opened_at|time:"%Y-%m-%d %H:%M" }}</td></tr>{% endfor %}</tbody>
 </table></div>{% else %}<p class="pd-muted">{% translate "admin.alerts.none" %}</p>{% endif %}
 <section class="pd-panel mt-5" aria-labelledby="pd-quota-title">
   <h2 id="pd-quota-title">{% translate "admin.quota.title" %}</h2>

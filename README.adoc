@@ -67,7 +67,9 @@ validation.
 
 `dry-run` (à blanc)::
 Rien n'est exécuté : état simulé, chaque geste écrit au journal. Specs et
-répétitions.
+répétitions. `--fail-on TEXTE` (à blanc seulement) fait échouer la première
+opération qui contient `TEXTE` : répétition d'un retour arrière, par exemple
+`--fail-on "instance migrate"` pour une montée de version.
 
 `local`::
 Machine de développement : vraies bases `partiduo_adm_*` (toute autre base

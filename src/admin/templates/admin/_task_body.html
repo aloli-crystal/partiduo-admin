@@ -7,7 +7,7 @@
       <dt>{% translate "admin.tasks.requested_by" %}</dt><dd>{{ task.requested_by_label }}</dd>
       <dt>{% translate "admin.tasks.created_at" %}</dt><dd class="pd-mono">{{ task.created_at|time:"%Y-%m-%d %H:%M:%S" }}</dd>
       {% if task.finished_at %}<dt>{% translate "admin.tasks.finished_at" %}</dt><dd class="pd-mono">{{ task.finished_at|time:"%Y-%m-%d %H:%M:%S" }}</dd>{% endif %}
-      {% if task.error %}<dt>{% translate "admin.tasks.error" %}</dt><dd>{{ task.error }}</dd>{% endif %}
+      {% if task.error_text %}<dt>{% translate "admin.tasks.error" %}</dt><dd>{{ task.error_text }}</dd>{% endif %}
     </dl>
   </section>
   <section class="pd-panel" aria-labelledby="pd-log-title">

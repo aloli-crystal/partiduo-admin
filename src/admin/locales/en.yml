@@ -164,6 +164,13 @@ en:
       last_backup: "Last backup"
       checked_at: "Last check"
       disk: "Free disk"
+      states:
+        running: "running"
+        stopped: "stopped"
+        ok: "reachable"
+        unavailable: "unreachable"
+        error: "error"
+        unknown: "unknown"
     actions:
       title: "Actions"
       backup: "Back up"
@@ -357,6 +364,7 @@ en:
       agent: "Agent"
       last_seen: "Last contact"
       rotate: "New token"
+      rotate_confirm: "A new token immediately revokes the one used by this server's agent. Continue?"
       token_title: "Agent token"
       token_once: "This token will not be shown again. Copy it into the partiduo-agent token file on the server."
       token_help: "The agent presents it on every call (Authorization: Bearer). A new token revokes the previous one."

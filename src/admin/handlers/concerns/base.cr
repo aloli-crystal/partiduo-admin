@@ -23,7 +23,15 @@ module PartiduoAdmin
     getter options : Array(Option)
     getter errors : Array(String)
     getter required : Bool
-    getter help : String
+    # Aide : `nil` si vide (une chaîne vide est vraie dans un gabarit de
+    # Marten : `{% if field.help %}` produisait un paragraphe vide et un
+    # `aria-describedby` vers lui).
+    @help : String
+
+    def help : String?
+      @help.presence
+    end
+
     getter checked : Bool
 
     def initialize(@name, @label, @value = "", @type = "text", @options = [] of Option, @errors = [] of String,
@@ -42,11 +50,11 @@ module PartiduoAdmin
       "#{id}-help"
     end
 
-    def describedby : String
+    def describedby : String?
       ids = [] of String
-      ids << help_id unless help.empty?
+      ids << help_id if help
       ids << error_id unless errors.empty?
-      ids.join(' ')
+      ids.join(' ').presence
     end
 
     def has_errors : Bool

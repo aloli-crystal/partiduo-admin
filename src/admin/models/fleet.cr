@@ -95,6 +95,25 @@ module PartiduoAdmin
       "admin.dossiers.states.#{state}"
     end
 
+    def schedule_key : String
+      "admin.schedules.#{backup_schedule}"
+    end
+
+    # États relevés par la supervision (`running`, `stopped`, `ok`,
+    # `unavailable`, `error`), traduits ; `nil` si jamais relevés.
+    def service_state_key : String?
+      health_key(service_state.to_s)
+    end
+
+    def database_state_key : String?
+      health_key(database_state.to_s)
+    end
+
+    private def health_key(value : String) : String?
+      return if value.empty?
+      %w[running stopped ok unavailable error].includes?(value) ? "admin.health.states.#{value}" : "admin.health.states.unknown"
+    end
+
     def firm_name : String
       firm.try(&.name) || ""
     end
@@ -197,6 +216,12 @@ module PartiduoAdmin
     def finished : Bool
       %w[succeeded failed cancelled].includes?(state)
     end
+
+    # Erreur à afficher, `nil` si aucune (une chaîne vide est vraie dans un
+    # gabarit de Marten).
+    def error_text : String?
+      error.presence
+    end
   end
 
   # Sauvegarde d'un dossier (ADR-008 D5) : `pg_dump -Fc` et archive des
@@ -266,8 +291,9 @@ module PartiduoAdmin
       JSON.parse(params.presence || "{}")[key]?.try(&.as_s?) || ""
     end
 
-    def param_email : String
-      param("email")
+    # `nil` si absente : une chaîne vide est vraie dans un gabarit.
+    def param_email : String?
+      param("email").presence
     end
   end
 
@@ -287,6 +313,14 @@ module PartiduoAdmin
 
     def kind_key : String
       "admin.alerts.kinds.#{kind}"
+    end
+
+    # Détail affiché : l'état relevé par la supervision (`stopped`,
+    # `unavailable`…) est traduit ; tout autre détail est rendu tel quel.
+    def detail_text : String
+      value = detail.to_s
+      return value unless %w[service database].includes?(kind) && %w[running stopped ok unavailable error].includes?(value)
+      I18n.t("admin.health.states.#{value}")
     end
 
     def subject : String

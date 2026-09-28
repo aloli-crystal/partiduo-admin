@@ -89,6 +89,8 @@ module PartiduoAgent
         parser.on("--acme-staging", "autorité de test de Let's Encrypt") { config.acme_staging = true }
         parser.on("--poll SECONDES", "intervalle d'interrogation") { |value| config.poll_interval = value.to_i.seconds }
         parser.on("--once", "traite au plus une tâche puis s'arrête") { config.once = true }
+        parser.on("--fail-on TEXTE", "à blanc seulement : fait échouer la première opération qui contient TEXTE " \
+                                     "(répétition d'un retour arrière)") { |value| config.fail_on = value }
         parser.on("-h", "--help", "cette aide") do
           puts parser
           exit 0
@@ -113,6 +115,12 @@ module PartiduoAgent
         raise ArgumentError.new("domaine invalide : #{domain}")
       end
       raise ArgumentError.new("le mode production exige --domain") if mode.production? && domain.empty?
+      validate_fail_on!
+    end
+
+    # Échec simulé : jamais sur un vrai système.
+    private def validate_fail_on! : Nil
+      raise ArgumentError.new("--fail-on n'est permis qu'à blanc") if fail_on && !mode.dry_run?
     end
 
     def local? : Bool

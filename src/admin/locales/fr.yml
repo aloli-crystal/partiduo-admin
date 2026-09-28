@@ -164,6 +164,13 @@ fr:
       last_backup: "Dernière sauvegarde"
       checked_at: "Dernier relevé"
       disk: "Disque libre"
+      states:
+        running: "en marche"
+        stopped: "arrêté"
+        ok: "joignable"
+        unavailable: "injoignable"
+        error: "en erreur"
+        unknown: "inconnu"
     actions:
       title: "Actions"
       backup: "Sauvegarder"
@@ -357,6 +364,7 @@ fr:
       agent: "Exécutant"
       last_seen: "Dernier contact"
       rotate: "Nouveau jeton"
+      rotate_confirm: "Un nouveau jeton annule aussitôt celui de l'exécutant de ce serveur. Continuer ?"
       token_title: "Jeton de l'exécutant"
       token_once: "Ce jeton ne sera plus affiché. Copiez-le dans le fichier de jeton de partiduo-agent sur le serveur."
       token_help: "L'exécutant le présente à chaque appel (Authorization: Bearer). Un nouveau jeton annule le précédent."
