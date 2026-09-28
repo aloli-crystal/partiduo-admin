@@ -42,6 +42,24 @@ module PartiduoAdmin
     # (par le même serveur : elle est rattachée à lui).
     LEASE_SECONDS = 600
 
+    # Conservation d'une archive (Code de commerce, art. L123-22 ; ADR-008
+    # D5) : l'exécutant la revérifie lui-même avant une suppression
+    # définitive ou l'effacement d'une archive (D-CRA-007).
+    ARCHIVE_RETENTION_YEARS = 10
+
+    # Nom d'un fichier d'archive : `archive-<horodatage>.dump` ou
+    # `archive-<horodatage>.media.tar.gz` (horodatage UTC de la prise).
+    ARCHIVE_FILE = /\Aarchive-(\d{8}T\d{6}Z)\./
+
+    # Date de prise d'un fichier d'archive, d'après son nom ; `nil` pour un
+    # autre fichier.
+    def self.archive_taken_at(path : String) : Time?
+      match = ARCHIVE_FILE.match(File.basename(path)) || return
+      Time.parse(match[1], "%Y%m%dT%H%M%SZ", Time::Location::UTC)
+    rescue Time::Format::Error
+      nil
+    end
+
     # Modules officiels de partiduo-app (ADR-006, ADR-007).
     MODULES = %w[accounting invoicing analytic stock followup micro liberal]
 

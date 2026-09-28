@@ -59,6 +59,12 @@ module PartiduoAgent
     property pg_socket : String = "/var/run/postgresql"
     property acme_email : String = ""
     property acme_staging : Bool = false
+    # Remise des invitations par le serveur (D-CRA-003) : commande de
+    # courriel (sans shell, message sur l'entrée standard, destinataire en
+    # dernier argument) et expéditeur. Vide : le lien est rendu à
+    # l'administration, qui l'envoie (D-ADM-009).
+    property mail_command : String = ""
+    property mail_from : String = ""
     property poll_interval : Time::Span = 15.seconds
     property once : Bool = false
     # À blanc : fait échouer la première opération dont le nom contient
@@ -87,6 +93,10 @@ module PartiduoAgent
         parser.on("--pg-socket RÉP", "socket PostgreSQL") { |value| config.pg_socket = value }
         parser.on("--acme-email ADRESSE", "compte ACME") { |value| config.acme_email = value }
         parser.on("--acme-staging", "autorité de test de Let's Encrypt") { config.acme_staging = true }
+        parser.on("--mail-command COMMANDE", "remise des invitations par le serveur (ex. « /usr/sbin/sendmail -oi »)") do |value|
+          config.mail_command = value
+        end
+        parser.on("--mail-from ADRESSE", "expéditeur des invitations remises par le serveur") { |value| config.mail_from = value }
         parser.on("--poll SECONDES", "intervalle d'interrogation") { |value| config.poll_interval = value.to_i.seconds }
         parser.on("--once", "traite au plus une tâche puis s'arrête") { config.once = true }
         parser.on("--fail-on TEXTE", "à blanc seulement : fait échouer la première opération qui contient TEXTE " \
@@ -116,6 +126,13 @@ module PartiduoAgent
       end
       raise ArgumentError.new("le mode production exige --domain") if mode.production? && domain.empty?
       validate_fail_on!
+      validate_mail!
+    end
+
+    # Remise des invitations par le serveur : expéditeur obligatoire.
+    private def validate_mail! : Nil
+      return if mail_command.strip.empty? || InvitationMail.valid_address?(mail_from)
+      raise ArgumentError.new("--mail-command exige --mail-from (adresse de l'expéditeur)")
     end
 
     # Échec simulé : jamais sur un vrai système.

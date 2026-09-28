@@ -9,6 +9,9 @@ require "./agent/lib"
 
 begin
   config = PartiduoAgent::Config.parse(ARGV)
+  if config.production? && config.mail_command.strip.empty?
+    STDERR.puts "partiduo-agent : sans --mail-command, les liens d'invitation passent par l'administration (D-CRA-003)"
+  end
   PartiduoAgent::Runner.new(config).run
 rescue ex : ArgumentError | OptionParser::Exception
   STDERR.puts "partiduo-agent : #{ex.message}"

@@ -241,6 +241,11 @@ case "$command" in
     check_backup_path "$2"
     check_backup_path "$3"
     root=$(media_root "$1")
+    # Chemins relatifs au stockage de l'instance seulement : ni absolu, ni
+    # « .. », ni option, ni caractère de contrôle (D-CRA-004).
+    if [ -f "$2" ] && { grep -Eq '^/|^-|(^|/)\.\.(/|$)|//' "$2" || LC_ALL=C grep -q '[[:cntrl:]]' "$2"; }; then
+      die "liste refusée : chemin hors du stockage des pièces jointes"
+    fi
     if [ ! -d "$root" ] || [ ! -s "$2" ]; then
       # Aucune pièce jointe : archive vide, pour une sauvegarde homogène.
       exec tar -czf "$3" -T /dev/null

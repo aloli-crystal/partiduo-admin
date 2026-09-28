@@ -29,7 +29,7 @@ module PartiduoAdmin
     RECOVERY_CODES    = 10
 
     # Conservation des archives : dix ans (Code de commerce, art. L123-22).
-    ARCHIVE_RETENTION_YEARS = 10
+    ARCHIVE_RETENTION_YEARS = Protocol::ARCHIVE_RETENTION_YEARS
 
     # Double validation : une demande non validée expire.
     APPROVAL_TTL = 7.days

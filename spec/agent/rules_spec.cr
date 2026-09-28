@@ -128,9 +128,15 @@ describe "partiduo-agent : garde-fous" do
   it "supprime définitivement : service retiré, base supprimée, puis sauvegardes effacées" do
     with_admin do |admin|
       config = admin.config
-      backups = [File.join(config.backup_dir, "garde", "a.dump"), File.join(config.backup_dir, "garde", "a.media.tar.gz")]
+      archive = File.join(config.backup_dir, "garde", "archive-20160101T000000Z.dump")
+      backups = [archive, File.join(config.backup_dir, "garde", "archive-20160101T000000Z.media.tar.gz")]
       params = base_params.merge({"approval_ref" => "DV-AAAA-BBBB", "approvers" => ["a@x.fr", "b@x.fr"], "backups" => backups})
-      report, runner = run_task(admin, config, 40_i64, "instance.delete", params)
+      admin.push(40_i64, "instance.delete", params)
+      runner = PartiduoAgent::Runner.new(config)
+      # Archive de plus de dix ans, revérifiée par le serveur (D-CRA-007).
+      runner.build_system(->(_line : String) { nil }).as(PartiduoAgent::DrySystem).files[archive] = 1_i64
+      runner.run_once.should be_true
+      report = admin.finished[40_i64]
       report["ok"].as_bool.should be_true
       calls = dry_calls(runner)
       calls.index!(&.starts_with?("retrait")).should be < calls.index!(&.starts_with?("dropdb"))

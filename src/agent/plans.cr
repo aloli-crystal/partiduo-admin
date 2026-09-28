@@ -82,6 +82,25 @@ module PartiduoAgent
       expected
     end
 
+    # Chemin de sauvegarde reçu de l'administration : sous le répertoire des
+    # sauvegardes *du dossier* (`<backup_dir>/<sous-domaine>/`), jamais celui
+    # d'un autre. Une tâche forgée ne restaure donc pas la base d'un dossier
+    # dans un autre, ni n'efface les sauvegardes d'un autre (D-CRA-001).
+    def own_backup!(path : String, of_slug : String = slug) : String
+      system.guard_backup_path!(path, of_slug)
+    end
+
+    # Valeur reçue de l'administration et passée en argument à
+    # `manage instance` : jamais prise pour une option (`--list-file=…`),
+    # jamais sur plusieurs lignes (D-CRA-002).
+    def value_arg(key : String) : String
+      value = param(key)
+      if value.starts_with?('-') || value.includes?('\n') || value.includes?('\r') || value.includes?('\0')
+        raise StepError.new("valeur refusée pour #{key}", "usage")
+      end
+      value
+    end
+
     def log(line : String) : Nil
       system.log(line)
     end
@@ -191,7 +210,17 @@ module PartiduoAgent
       raise StepError.new("instance non provisionnée après création", "refused") unless status["provisioned"]?.try(&.as_bool?)
       ctx.set("database", database)
       ctx.set("version", status["version"]?.try(&.as_s?) || "")
-      ctx.set("invitation_url", ctx.journal["invitation_url"]?) if ctx.journal["invitation_url"]?
+      if url = ctx.journal["invitation_url"]?
+        if ctx.system.mailer?
+          # Lien remis par le serveur lui-même (D-CRA-003).
+          ctx.step("invitation") do
+            ctx.system.deliver_invitation(ctx.param("admin_email"), host, url, ctx.param("locale"))
+          end
+          ctx.set("invitation_delivered", "server")
+        else
+          ctx.set("invitation_url", url)
+        end
+      end
       ctx.set("certificate", {"issued" => ctx.journal["certificate"]? == "true", "staging" => system.config.acme_staging})
     end
 
@@ -301,12 +330,13 @@ module PartiduoAgent
     # Restauration d'une archive en instance active : base recréée depuis
     # l'archive si elle a disparu, lecture seule levée, service démarré.
     def self.restore_archive(ctx : Context) : Nil
+      path = ctx.param("path")
+      path = ctx.own_backup!(path) unless path.empty?
       ctx.step("base") do
         unless ctx.system.database_exists?(ctx.database)
-          path = ctx.param("path")
           raise StepError.new("base absente et aucune archive fournie", "usage") if path.empty?
           ctx.system.createdb(ctx.database)
-          ctx.system.pg_restore(ctx.database, ctx.system.guard_backup_path!(path))
+          ctx.system.pg_restore(ctx.database, path)
         end
       end
       ctx.step("lecture seule levée") { ctx.instance!("read-only", ["off", "--reason", "restauration de l'archive"]) }
@@ -318,11 +348,15 @@ module PartiduoAgent
     # vérifiées par l'admin) : service et fichiers retirés, base supprimée,
     # sauvegardes effacées.
     def self.delete(ctx : Context) : Nil
+      # Chemins vérifiés avant tout geste : une liste qui vise un autre
+      # dossier n'a rien retiré (D-CRA-001).
+      backups = ctx.list("backups").map { |path| ctx.own_backup!(path) }
+      ctx.system.guard_retention!(ctx.slug)
       ctx.log("suppression définitive — validation #{ctx.param("approval_ref")} par #{ctx.list("approvers").join(", ")}")
       ctx.step("retrait du service") { ctx.system.remove_instance(ctx.slug, ctx.host) }
       ctx.step("suppression de la base") { ctx.system.dropdb(ctx.database) }
       ctx.step("suppression des sauvegardes") do
-        ctx.list("backups").each { |path| ctx.system.remove(path) }
+        backups.each { |path| ctx.system.remove(path) }
       end
       ctx.set("deleted", true)
     end
@@ -391,10 +425,23 @@ module PartiduoAgent
 
     def self.admin_invite(ctx : Context) : Nil
       check_contract(ctx)
-      data = ctx.instance!("admin-invite", [ctx.param("email"), "--reason", ctx.param("reason"),
-                                            "--approval-ref", ctx.param("approval_ref"),
-                                            "--approvers", ctx.list("approvers").join(',')])
-      %w[email user_created url expires_at usable_admins].each { |key| ctx.result[key] = data[key] if data[key]? }
+      approvers = ctx.list("approvers")
+      if approvers.any? { |approver| approver.starts_with?('-') || approver.includes?(',') || approver.includes?('\n') }
+        raise StepError.new("valeur refusée pour approvers", "usage")
+      end
+      data = ctx.instance!("admin-invite", [ctx.value_arg("email"), "--reason", ctx.value_arg("reason"),
+                                            "--approval-ref", ctx.value_arg("approval_ref"),
+                                            "--approvers", approvers.join(',')])
+      %w[email user_created expires_at usable_admins].each { |key| ctx.result[key] = data[key] if data[key]? }
+      url = data["url"]?.try(&.as_s?)
+      if url && ctx.system.mailer?
+        # Lien remis par le serveur lui-même : il ne passe jamais par
+        # l'administration (D-CRA-003).
+        ctx.system.deliver_invitation(data["email"]?.try(&.as_s?) || ctx.param("email"), ctx.host, url, ctx.param("locale"))
+        ctx.set("invitation_delivered", "server")
+      elsif url
+        ctx.result["url"] = JSON::Any.new(url)
+      end
     end
 
     # --- Sauvegardes -------------------------------------------------------------
@@ -441,7 +488,9 @@ module PartiduoAgent
     end
 
     def self.prune(ctx : Context) : Nil
-      ctx.list("paths").each do |path|
+      paths = ctx.list("paths").map { |path| ctx.own_backup!(path) }
+      paths.each { |path| ctx.system.guard_archive_removal!(path) }
+      paths.each do |path|
         ctx.step("effacer #{File.basename(path)}") { ctx.system.remove(path) }
       end
       ctx.set("pruned", ctx.list("paths").size)
@@ -452,7 +501,7 @@ module PartiduoAgent
     # qu'une sauvegarde se relit (ADR-008 D5).
     def self.test_restore(ctx : Context) : Nil
       system = ctx.system
-      path = system.guard_backup_path!(ctx.param("path"))
+      path = ctx.own_backup!(ctx.param("path"))
       scratch = system.scratch_database(ctx.slug, ctx.task.id)
       unless ctx.param("sha256").empty? || system.sha256(path) == ctx.param("sha256")
         raise StepError.new("empreinte de la sauvegarde altérée : #{path}")
@@ -464,6 +513,7 @@ module PartiduoAgent
         status = ctx.instance!("status", database: scratch)
         raise StepError.new("sauvegarde relue mais instance non provisionnée") unless status["provisioned"]?.try(&.as_bool?)
         media = ctx.param("media_path")
+        media = ctx.own_backup!(media) unless media.empty?
         raise StepError.new("archive des pièces illisible") unless media.empty? || system.tar_list?(media)
         ctx.set("version", status["version"]? || "")
         ctx.set("verified", true)
@@ -476,9 +526,9 @@ module PartiduoAgent
     # remplacement (`replace`, après une sauvegarde de sûreté).
     def self.restore(ctx : Context) : Nil
       system = ctx.system
-      path = system.guard_backup_path!(ctx.param("path"))
+      path = ctx.own_backup!(ctx.param("path"))
       media = ctx.param("media_path")
-      media = system.guard_backup_path!(media) unless media.empty?
+      media = ctx.own_backup!(media) unless media.empty?
       unless ctx.param("sha256").empty? || system.sha256(path) == ctx.param("sha256")
         raise StepError.new("empreinte de la sauvegarde altérée : #{path}")
       end

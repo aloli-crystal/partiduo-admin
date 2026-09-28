@@ -104,11 +104,91 @@ module PartiduoAgent
 
     # Un chemin de sauvegarde n'est accepté que sous `backup_dir` : aucune
     # tâche ne fait effacer un fichier ailleurs.
-    def guard_backup_path!(path : String) : String
-      root = File.expand_path(config.backup_dir)
+    #
+    # Avec `slug` : sous le répertoire des sauvegardes *de ce dossier*
+    # (D-CRA-001).
+    def guard_backup_path!(path : String, slug : String? = nil) : String
+      root = File.expand_path(slug ? backup_root(slug) : config.backup_dir)
       full = File.expand_path(path)
-      raise StepError.new("chemin hors du répertoire des sauvegardes : #{path}", "usage") unless full.starts_with?(root + "/")
+      if !full.starts_with?(root + "/") || path.includes?('\0')
+        raise StepError.new("chemin hors du répertoire des sauvegardes#{slug ? " du dossier" : ""} : #{path}", "usage")
+      end
       full
+    end
+
+    # Ligne sûre d'une liste de pièces jointes (`tar -C <racine> -T liste`) :
+    # chemin relatif, sans `..`, sans caractère de contrôle. Toute autre
+    # ligne ferait archiver un fichier hors du stockage de l'instance
+    # (D-CRA-004).
+    def self.safe_media_line?(line : String) : Bool
+      return false if line.empty? || line.starts_with?('/') || line.starts_with?('-')
+      return false if line.each_char.any?(&.control?)
+      line.split('/').none? { |part| part == ".." || part.empty? }
+    end
+
+    # Dates de prise des archives d'un dossier (`archive-<horodatage>.dump`
+    # sous son répertoire de sauvegarde).
+    def archive_dates(slug : String) : Array(Time)
+      Dir.glob(File.join(backup_root(slug), "archive-*.dump")).compact_map do |path|
+        PartiduoAdmin::Protocol.archive_taken_at(path)
+      end
+    end
+
+    # Durée légale revérifiée par le serveur (D-CRA-007) : une suppression
+    # définitive exige une archive du dossier, et la plus récente doit avoir
+    # plus de dix ans. Une administration compromise ne supprime donc pas un
+    # dossier avant son terme.
+    def guard_retention!(slug : String, now : Time = Time.utc) : Nil
+      latest = archive_dates(slug).max?
+      raise StepError.new("aucune archive du dossier sur le serveur : suppression refusée", "refused") if latest.nil?
+      if latest.shift(years: PartiduoAdmin::Protocol::ARCHIVE_RETENTION_YEARS) > now
+        raise StepError.new("durée légale de conservation non écoulée (archive du #{latest.to_s("%Y-%m-%d")}) : " \
+                            "suppression refusée", "refused")
+      end
+    end
+
+    # Une archive encore dans sa durée légale n'est jamais effacée
+    # (`backup.prune`, D-CRA-007).
+    def guard_archive_removal!(path : String, now : Time = Time.utc) : Nil
+      taken = PartiduoAdmin::Protocol.archive_taken_at(path) || return
+      if taken.shift(years: PartiduoAdmin::Protocol::ARCHIVE_RETENTION_YEARS) > now
+        raise StepError.new("archive dans sa durée légale de conservation : #{File.basename(path)}", "refused")
+      end
+    end
+
+    # Courriel remis par le serveur (`--mail-command`, D-CRA-003).
+    def mailer? : Bool
+      !config.mail_command.strip.empty?
+    end
+
+    def deliver_invitation(email : String, host : String, url : String, locale : String) : Nil
+      raise StepError.new("adresse d'invitation refusée", "usage") unless InvitationMail.valid_address?(email)
+      raise StepError.new("expéditeur des courriels manquant (--mail-from)", "usage") if config.mail_from.empty?
+      send_mail(email, InvitationMail.build(config.mail_from, email, host, url, locale.presence || "fr"))
+      # Le lien n'est jamais écrit au journal renvoyé à l'administration.
+      log("invitation remise par le serveur à #{email}")
+    end
+
+    # Commande de courriel lancée sans shell ; message sur l'entrée standard.
+    def send_mail(recipient : String, message : String) : Nil
+      argv = config.mail_command.split(' ', remove_empty: true) + [recipient]
+      stderr = IO::Memory.new
+      status = Process.run(argv[0], argv[1..], input: IO::Memory.new(message), output: Process::Redirect::Close,
+        error: stderr)
+      raise StepError.new("courriel non remis (code #{status.exit_code}) : #{stderr.to_s.strip[0, 200]?}") unless status.success?
+    rescue ex : File::NotFoundError | IO::Error
+      raise StepError.new("courriel non remis : #{ex.message}")
+    end
+
+    # Sortie d'erreur d'un outil, pour le journal renvoyé à l'administration :
+    # sans les lignes de PostgreSQL qui citent des valeurs de la base
+    # (`DETAIL`, `CONTEXT`, `Command was`, `LINE`…), ADR-008 D3 (D-CRA-005).
+    def self.redact_errors(text : String) : String
+      text.lines.reject do |line|
+        line.lstrip.starts_with?("DETAIL:") || line.lstrip.starts_with?("CONTEXT:") ||
+          line.lstrip.starts_with?("Command was:") || line.lstrip.starts_with?("LINE ") ||
+          line.lstrip.starts_with?("HINT:") || line.lstrip.starts_with?("QUERY:") || line.lstrip.starts_with?("^")
+      end.join('\n')
     end
   end
 
@@ -264,6 +344,20 @@ module PartiduoAgent
       files.has_key?(path)
     end
 
+    # Archives simulées : fichiers connus du système à blanc.
+    def archive_dates(slug : String) : Array(Time)
+      root = backup_root(slug) + "/"
+      files.keys.select(&.starts_with?(root)).compact_map { |path| PartiduoAdmin::Protocol.archive_taken_at(path) }
+    end
+
+    # Courriels remis à blanc : destinataire et message (specs).
+    getter mails = [] of {String, String}
+
+    def send_mail(recipient : String, message : String) : Nil
+      op("courriel", recipient)
+      mails << {recipient, message}
+    end
+
     # Même garde-fou qu'en production : un essai à blanc refuse ce que le
     # serveur refuserait.
     def remove(path : String) : Nil
@@ -334,7 +428,7 @@ module PartiduoAgent
 
     def run!(argv : Array(String), env = {} of String => String, chdir : String? = nil) : String
       code, output, err = run(argv, env, chdir)
-      raise StepError.new("#{File.basename(argv[0])} (code #{code}) : #{err.strip[0, 500]? || ""}") unless code == 0
+      raise StepError.new("#{File.basename(argv[0])} (code #{code}) : #{System.redact_errors(err).strip[0, 500]? || ""}") unless code == 0
       output
     end
 
@@ -455,7 +549,7 @@ module PartiduoAgent
     # début de la sortie d'erreur (diagnostic dans le journal de la tâche).
     def reply_line(output : String, errors : String) : String
       output.lines.reverse!.find(&.starts_with?('{')) ||
-        {"ok" => false, "error" => {"code" => "internal", "message" => "réponse illisible : #{errors.strip[0, 300]?}"}}.to_json
+        {"ok" => false, "error" => {"code" => "internal", "message" => "réponse illisible : #{System.redact_errors(errors).strip[0, 300]?}"}}.to_json
     end
 
     def marker(slug : String) : String
@@ -521,7 +615,10 @@ module PartiduoAgent
 
     def merge_lists(sources : Array(String), destination : String) : Nil
       lines = sources.flat_map { |source| File.exists?(source) ? File.read_lines(source) : [] of String }
-      File.write(guard_backup_path!(destination), lines.reject(&.empty?).uniq!.sort!.join { |line| "#{line}\n" })
+      lines = lines.reject(&.empty?)
+      unsafe = lines.reject { |line| System.safe_media_line?(line) }
+      log("#{unsafe.size} ligne(s) de pièce jointe écartée(s) : chemin hors du stockage") unless unsafe.empty?
+      File.write(guard_backup_path!(destination), (lines - unsafe).uniq!.sort!.join { |line| "#{line}\n" })
       sources.each { |source| File.delete(source) if File.exists?(source) }
     end
 

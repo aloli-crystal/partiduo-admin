@@ -5,6 +5,7 @@
 require "../shared/protocol"
 require "./config"
 require "./client"
+require "./mail"
 require "./system"
 require "./journal"
 require "./plans"

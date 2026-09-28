@@ -88,6 +88,21 @@ sous le compte des instances, propriétaire des bases). `--domain` est
 obligatoire : l'hôte et la base de chaque tâche sont recalculés depuis le
 sous-domaine (D-AFN-002, D-AFN-004, D-AFN-005).
 
+*Invitations remises par le serveur* (tous modes, recommandé en production) :
+`--mail-command "/usr/sbin/sendmail -oi" --mail-from noreply@partiduo.app`.
+L'exécutant envoie lui-même le lien d'invitation de l'administrateur d'un
+dossier (création, recours d'accès) ; l'administration n'en reçoit que la
+trace `invitation_delivered`. Sans cette option, le lien lui est rendu et
+elle l'envoie (D-ADM-009) : une faille de l'administration le révélerait
+(D-CRA-003).
+
+*Ce que l'exécutant refuse d'une administration compromise* : une sauvegarde
+hors du répertoire du dossier (`<backup-dir>/<sous-domaine>/`, D-CRA-001),
+une valeur prise pour une option de `manage instance` (D-CRA-002), une
+pièce jointe hors du stockage de l'instance (D-CRA-004) ; les lignes de
+PostgreSQL qui citent des valeurs de la base ne remontent pas dans le
+journal des tâches (D-CRA-005).
+
 == Développement
 
 [source,sh]

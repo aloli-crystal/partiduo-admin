@@ -105,6 +105,14 @@ module PartiduoAdmin
     def self.reject(user : User, approval : Approval, now : Time = Config.now) : Bool
       return false unless approval.state == "pending"
       return false unless approval.requested_by_id == user.pk || Access.can_approve?(user, approval)
+      # Mise à jour conditionnelle, comme la validation (D-AFN-010) : une
+      # demande validée entre-temps n'est jamais « rejetée » après coup
+      # (D-AFN-011, D-CRA-006).
+      claimed = Approval.filter(id: approval.pk, state: "pending").update(state: "rejected", decided_at: now)
+      if claimed != 1
+        approval.reload
+        return false
+      end
       approval.state = "rejected"
       approval.decided_by = user
       approval.decided_at = now

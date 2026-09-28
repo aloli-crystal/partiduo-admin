@@ -48,6 +48,9 @@ module PartiduoAdmin
         "modules"    => any(dossier.module_list),
         "extensions" => any(dossier.extension_list),
         "version"    => any(dossier.version),
+        # Langue du courriel d'invitation quand le serveur le remet lui-même
+        # (D-CRA-003).
+        "locale" => any(dossier.locale.to_s),
       }
     end
 
