@@ -11,8 +11,10 @@ module PartiduoAgent
     getter journal : Journal
     getter result = {} of String => JSON::Any
     property on_step : Proc(String, Nil) = ->(_step : String) { nil }
+    getter keyring : Keyring
 
     def initialize(@task : TaskInfo, @system : System, @journal : Journal)
+      @keyring = Keyring.new(system.config, journal, task.data_keys, ->(line : String) { system.log(line) })
     end
 
     def params : JSON::Any
@@ -315,11 +317,13 @@ module PartiduoAgent
       end
       data = backup(ctx, "archive", prefix: "archive")
       ctx.step("vérification de l'archive") do
+        # Chiffrée : relue avec la clé de données que la tâche vient de
+        # tirer (journal), y compris pour la clé du cabinet (D-CHF-007).
         path = data["path"].as_s
-        raise StepError.new("archive illisible : #{path}") unless ctx.system.pg_restore_list?(path)
+        raise StepError.new("archive illisible : #{path}") unless ctx.system.database_readable?(path, ctx.keyring)
         raise StepError.new("empreinte de l'archive altérée") unless ctx.system.sha256(path) == data["sha256"].as_s
         media = data["media_path"].as_s
-        raise StepError.new("archive des pièces illisible") unless media.empty? || ctx.system.tar_list?(media)
+        raise StepError.new("archive des pièces illisible") unless media.empty? || ctx.system.media_readable?(media, ctx.keyring)
       end
       ctx.step("arrêt du service") { ctx.system.service(ctx.slug, "stop") }
       verified = data.as_h.merge({"verified" => JSON::Any.new(true)})
@@ -336,7 +340,7 @@ module PartiduoAgent
         unless ctx.system.database_exists?(ctx.database)
           raise StepError.new("base absente et aucune archive fournie", "usage") if path.empty?
           ctx.system.createdb(ctx.database)
-          ctx.system.pg_restore(ctx.database, path)
+          ctx.system.restore_database(ctx.database, path, ctx.keyring)
         end
       end
       ctx.step("lecture seule levée") { ctx.instance!("read-only", ["off", "--reason", "restauration de l'archive"]) }
@@ -416,7 +420,7 @@ module PartiduoAgent
         path = backup_data.try(&.["path"]?).try(&.as_s?) || raise StepError.new("sauvegarde préalable introuvable")
         system.dropdb(ctx.database)
         system.createdb(ctx.database)
-        system.pg_restore(ctx.database, path)
+        system.restore_database(ctx.database, path, ctx.keyring)
       end
       system.service(ctx.slug, "start")
     end
@@ -449,13 +453,20 @@ module PartiduoAgent
     # `pg_dump -Fc` et archive des pièces jointes (liste de `backup-plan`),
     # empreinte SHA-256. Noms figés au premier passage : une reprise
     # réutilise les mêmes fichiers.
+    #
+    # Chiffrement (`encryption` des paramètres, D-CHF-001) : aucun, clé du
+    # serveur ou clé publique du cabinet. Chiffrées, la base et les pièces
+    # jointes partagent une clé de données et portent l'extension `.enc` ;
+    # le clair ne passe que par un tube (D-CHF-004).
     def self.backup(ctx : Context, kind : String, prefix : String = "backup") : JSON::Any
       system = ctx.system
       stamp = ctx.journal["#{prefix}.stamp"]? || (ctx.journal["#{prefix}.stamp"] = Time.utc.to_s("%Y%m%dT%H%M%SZ"))
+      sealer = sealer(ctx, prefix)
+      suffix = sealer ? BackupCrypto::EXTENSION : ""
       dir = system.backup_root(ctx.slug)
-      dump = File.join(dir, "#{prefix}-#{stamp}.dump")
+      dump = File.join(dir, "#{prefix}-#{stamp}.dump#{suffix}")
       list = File.join(dir, "#{prefix}-#{stamp}.files")
-      media = File.join(dir, "#{prefix}-#{stamp}.media.tar.gz")
+      media = File.join(dir, "#{prefix}-#{stamp}.media.tar.gz#{suffix}")
       # Pièces jointes relevées avant ET après pg_dump : l'archive porte
       # l'union des deux listes, donc toute pièce que la base sauvegardée
       # peut citer, même déposée ou supprimée pendant la sauvegarde
@@ -464,27 +475,96 @@ module PartiduoAgent
         system.mkdir(dir)
         ctx.instance!("backup-plan", ["--list-file", "#{list}.before"])
       end
-      ctx.step("#{prefix} : base") { system.pg_dump(ctx.database, dump) }
+      ctx.step("#{prefix} : base") do
+        sealer ? system.pg_dump_sealed(ctx.database, dump, sealer) : system.pg_dump(ctx.database, dump)
+      end
       ctx.step("#{prefix} : pièces jointes") do
         plan = ctx.instance!("backup-plan", ["--list-file", "#{list}.after"])
         root = plan["media_root"]?.try(&.as_s?) || ""
         missing = plan["missing"]?.try(&.as_a?).try(&.size) || 0
         ctx.log("#{missing} pièce(s) jointe(s) manquante(s) à signaler") if missing > 0
         system.merge_lists(["#{list}.before", "#{list}.after"], list)
-        system.tar_create(ctx.slug, root, list, media)
+        sealer ? system.tar_create_sealed(ctx.slug, root, list, media, sealer) : system.tar_create(ctx.slug, root, list, media)
       end
       data = {
-        "kind"       => kind,
-        "path"       => dump,
-        "media_path" => media,
-        "size_bytes" => system.size(dump) + system.size(media),
-        "sha256"     => system.sha256(dump),
-        "version"    => system.current_release(ctx.slug) || ctx.param("version"),
-        "taken_at"   => Time.parse(stamp, "%Y%m%dT%H%M%SZ", Time::Location::UTC).to_rfc3339,
+        "kind"         => kind,
+        "path"         => dump,
+        "media_path"   => media,
+        "size_bytes"   => system.size(dump) + system.size(media),
+        "sha256"       => system.sha256(dump),
+        "media_sha256" => system.sha256(media),
+        "version"      => system.current_release(ctx.slug) || ctx.param("version"),
+        "taken_at"     => Time.parse(stamp, "%Y%m%dT%H%M%SZ", Time::Location::UTC).to_rfc3339,
+        "encryption"   => sealer.try(&.describe) || {"mode" => "none"},
       }
       json = JSON.parse(data.to_json)
       data.each { |key, value| ctx.set(key, value) } if ctx.task.kind == "backup.run"
       json
+    end
+
+    # Clé de données de la sauvegarde `prefix` et son enveloppe, tirées au
+    # premier passage et retenues dans le journal : une reprise chiffre la
+    # suite avec la même clé. La clé de données (`secret.*`) est effacée du
+    # journal à la fin de la tâche ; une reprise après un échec qui ne peut
+    # plus la retrouver (clé du cabinet) reprend la sauvegarde depuis la base.
+    def self.sealer(ctx : Context, prefix : String) : BackupCrypto::Sealer?
+      settings = ctx.params["encryption"]?
+      mode = settings.try(&.["mode"]?).try(&.as_s?) || "none"
+      return if mode == "none"
+      raise StepError.new("mode de chiffrement inconnu : #{mode}", "usage") unless %w[server cabinet].includes?(mode)
+      if resumed = resumed_sealer(ctx, prefix, mode)
+        return resumed
+      end
+      journal = ctx.journal
+      sealer = if mode == "server"
+                 BackupCrypto::Sealer.server(ctx.keyring.server_key)
+               else
+                 BackupCrypto::Sealer.cabinet(cabinet_key(settings))
+               end
+      journal["#{prefix}.mode"] = mode
+      journal["#{prefix}.key_id"] = sealer.key_id.hexstring
+      journal["#{prefix}.wrapped"] = Base64.strict_encode(sealer.wrapped)
+      journal["#{Keyring::SECRET_PREFIX}#{prefix}.data_key"] = Base64.strict_encode(sealer.data_key)
+      ctx.log("#{prefix} : chiffrement #{mode == "server" ? "par la clé du serveur" : "par la clé du cabinet"} " \
+              "(empreinte #{sealer.key_id.hexstring[0, 16]}…)")
+      sealer
+    end
+
+    # Reprise : l'enveloppe et la clé de données du premier passage (clé du
+    # serveur : la clé de données se retrouve en la déchiffrant). Sans elle,
+    # la base et les pièces jointes sont à reprendre.
+    def self.resumed_sealer(ctx : Context, prefix : String, mode : String) : BackupCrypto::Sealer?
+      journal = ctx.journal
+      wrapped = journal["#{prefix}.wrapped"]?
+      return unless wrapped && journal["#{prefix}.mode"]? == mode
+      data_key = journal["#{Keyring::SECRET_PREFIX}#{prefix}.data_key"]?.try { |value| Base64.decode(value) }
+      if data_key.nil? && mode == "server"
+        data_key = ctx.keyring.server_key.unwrap(Base64.decode(wrapped)) rescue nil
+      end
+      if data_key
+        key_id = journal["#{prefix}.key_id"]?.try(&.hexbytes?) || raise StepError.new("journal de reprise incomplet")
+        return BackupCrypto::Sealer.new(mode == "server" ? BackupCrypto::SERVER : BackupCrypto::CABINET, key_id,
+          Base64.decode(wrapped), data_key)
+      end
+      ctx.log("#{prefix} : clé de données oubliée, sauvegarde reprise depuis la base")
+      journal.unmark("#{prefix} : base")
+      journal.unmark("#{prefix} : pièces jointes")
+      nil
+    end
+
+    # Clé publique du cabinet reçue de l'administration ; son empreinte doit
+    # être celle annoncée (une clé altérée en chemin est refusée).
+    def self.cabinet_key(settings : JSON::Any?) : BackupCrypto::PublicKey
+      pem = settings.try(&.["public_key"]?).try(&.as_s?) || ""
+      raise StepError.new("clé publique du cabinet manquante", "usage") if pem.empty?
+      key = BackupCrypto::PublicKey.new(pem)
+      expected = settings.try(&.["key_fingerprint"]?).try(&.as_s?) || ""
+      unless expected.empty? || expected == key.fingerprint
+        raise StepError.new("clé publique du cabinet : empreinte #{key.fingerprint[0, 16]}… au lieu de #{expected[0, 16]}…", "usage")
+      end
+      key
+    rescue ex : BackupCrypto::Error
+      raise StepError.new("clé publique du cabinet : #{ex.message}", "usage")
     end
 
     def self.prune(ctx : Context) : Nil
@@ -496,41 +576,102 @@ module PartiduoAgent
       ctx.set("pruned", ctx.list("paths").size)
     end
 
+    # Description de la sauvegarde lue (`backup_encryption`) : mode,
+    # empreinte de la clé, engagement sur la clé de données.
+    record SourceEnvelope, mode : String, fingerprint : String, commitment : String do
+      def sealed? : Bool
+        mode != "none"
+      end
+    end
+
+    def self.source_envelope(ctx : Context, path : String) : SourceEnvelope
+      info = ctx.params["backup_encryption"]?
+      mode = info.try(&.["mode"]?).try(&.as_s?) || (BackupCrypto.sealed_path?(path) ? "unknown" : "none")
+      if (mode == "none") == BackupCrypto.sealed_path?(path)
+        raise StepError.new("sauvegarde #{File.basename(path)} : chiffrement annoncé « #{mode} » incohérent avec le fichier", "usage")
+      end
+      SourceEnvelope.new(mode, info.try(&.["key_fingerprint"]?).try(&.as_s?) || "",
+        info.try(&.["commitment"]?).try(&.as_s?) || "")
+    end
+
+    # Empreintes SHA-256 des fichiers de la sauvegarde, calculées sur les
+    # fichiers tels que conservés (chiffrés s'ils le sont).
+    def self.check_digests(ctx : Context, path : String, media : String) : Nil
+      system = ctx.system
+      unless ctx.param("sha256").empty? || system.sha256(path) == ctx.param("sha256")
+        raise StepError.new("empreinte de la sauvegarde altérée : #{path}")
+      end
+      unless media.empty? || ctx.param("media_sha256").empty? || system.sha256(media) == ctx.param("media_sha256")
+        raise StepError.new("empreinte de l'archive des pièces jointes altérée : #{media}")
+      end
+    end
+
+    # Clé de la sauvegarde disponible : toujours pour la clé du serveur,
+    # pour la clé du cabinet seulement si l'admin du cabinet l'a fournie.
+    def self.readable?(ctx : Context, source : SourceEnvelope) : Bool
+      source.mode != "cabinet" || !ctx.keyring.data_key?(source.commitment).nil?
+    end
+
     # Restauration test : la sauvegarde est relue dans une base temporaire,
     # l'instance y répond (`status`), puis la base est supprimée. Prouve
     # qu'une sauvegarde se relit (ADR-008 D5).
+    #
+    # Chiffrée par la clé du cabinet sans que sa clé soit fournie : le
+    # serveur ne peut pas la lire (D-CHF-007) ; seules l'empreinte SHA-256
+    # et l'intégrité de l'enveloppe (en-tête, clé attendue, engagement,
+    # découpage) sont vérifiées, et le résultat le dit.
     def self.test_restore(ctx : Context) : Nil
       system = ctx.system
       path = ctx.own_backup!(ctx.param("path"))
+      media = ctx.param("media_path")
+      media = ctx.own_backup!(media) unless media.empty?
       scratch = system.scratch_database(ctx.slug, ctx.task.id)
-      unless ctx.param("sha256").empty? || system.sha256(path) == ctx.param("sha256")
-        raise StepError.new("empreinte de la sauvegarde altérée : #{path}")
+      source = source_envelope(ctx, path)
+      check_digests(ctx, path, media)
+      unless readable?(ctx, source)
+        system.check_envelope(path, source.fingerprint, source.commitment)
+        system.check_envelope(media, source.fingerprint, source.commitment) unless media.empty?
+        ctx.log("contenu vérifiable seulement avec la clé du cabinet : empreinte et enveloppe vérifiées")
+        ctx.set("verified", false)
+        ctx.set("envelope_verified", true)
+        ctx.set("check", "envelope")
+        return
       end
       begin
         system.dropdb(scratch) if system.database_exists?(scratch)
         system.createdb(scratch)
-        system.pg_restore(scratch, path)
+        system.restore_database(scratch, path, ctx.keyring)
         status = ctx.instance!("status", database: scratch)
         raise StepError.new("sauvegarde relue mais instance non provisionnée") unless status["provisioned"]?.try(&.as_bool?)
-        media = ctx.param("media_path")
-        media = ctx.own_backup!(media) unless media.empty?
-        raise StepError.new("archive des pièces illisible") unless media.empty? || system.tar_list?(media)
+        raise StepError.new("archive des pièces illisible") unless media.empty? || system.media_readable?(media, ctx.keyring)
         ctx.set("version", status["version"]? || "")
         ctx.set("verified", true)
+        ctx.set("check", "full")
       ensure
         system.dropdb(scratch)
       end
     end
 
     # Restauration à une date : dans une instance neuve (`new`) ou en
-    # remplacement (`replace`, après une sauvegarde de sûreté).
+    # remplacement (`replace`, après une sauvegarde de sûreté). Chiffrée,
+    # la sauvegarde est d'abord authentifiée en entier : rien n'est
+    # remplacé par un fichier altéré ou avec une mauvaise clé.
     def self.restore(ctx : Context) : Nil
       system = ctx.system
       path = ctx.own_backup!(ctx.param("path"))
       media = ctx.param("media_path")
       media = ctx.own_backup!(media) unless media.empty?
-      unless ctx.param("sha256").empty? || system.sha256(path) == ctx.param("sha256")
-        raise StepError.new("empreinte de la sauvegarde altérée : #{path}")
+      source = source_envelope(ctx, path)
+      check_digests(ctx, path, media)
+      if source.sealed?
+        unless readable?(ctx, source)
+          raise StepError.new("sauvegarde chiffrée par la clé du cabinet : la restauration exige que l'admin du " \
+                              "cabinet fournisse sa clé", "key_required")
+        end
+        ctx.step("authentification de la sauvegarde") do
+          system.verify_sealed(path, ctx.keyring)
+          system.verify_sealed(media, ctx.keyring) unless media.empty?
+        end
       end
       ctx.param("target") == "new" ? restore_new(ctx, path, media) : restore_replace(ctx, path, media)
     end
@@ -549,7 +690,7 @@ module PartiduoAgent
       ctx.step("base neuve") do
         system.dropdb(database) if system.database_exists?(database)
         system.createdb(database)
-        system.pg_restore(database, path)
+        system.restore_database(database, path, ctx.keyring)
       end
       ctx.step("fichiers de service") { system.provision_files(new_slug, ctx.domain, ctx.params, database) }
       ctx.step("installation") do
@@ -557,7 +698,7 @@ module PartiduoAgent
         version = ctx.release("version")
         system.switch_release(new_slug, version) unless version.empty?
       end
-      ctx.step("pièces jointes") { system.tar_extract(new_slug, media) unless media.empty? }
+      ctx.step("pièces jointes") { system.restore_media(new_slug, media, ctx.keyring) unless media.empty? }
       ctx.set("database", database)
       ctx.set("version", ctx.instance!("status", database: database, slug_override: new_slug)["version"]? || "")
       ctx.set("certificate", {"issued" => ctx.journal["certificate"]? == "true", "staging" => system.config.acme_staging})
@@ -580,9 +721,9 @@ module PartiduoAgent
       ctx.step("base remplacée") do
         system.dropdb(ctx.database)
         system.createdb(ctx.database)
-        system.pg_restore(ctx.database, path)
+        system.restore_database(ctx.database, path, ctx.keyring)
       end
-      ctx.step("pièces jointes") { system.tar_extract(ctx.slug, media) unless media.empty? }
+      ctx.step("pièces jointes") { system.restore_media(ctx.slug, media, ctx.keyring) unless media.empty? }
       ctx.step("démarrage du service") { system.service(ctx.slug, "start") }
       ctx.set("version", ctx.instance!("status")["version"]? || "")
     end

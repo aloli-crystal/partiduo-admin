@@ -22,17 +22,24 @@ module PartiduoAdmin
     # cours est rendue au lieu d'en créer une seconde.
     def self.enqueue(kind : String, server : Server, params : Params, requested_by : User? = nil,
                      dossier : Dossier? = nil, wave : Wave? = nil, wave_rank : Int32? = nil,
-                     requested_by_label : String? = nil) : Task
+                     requested_by_label : String? = nil, data_keys : Array(String)? = nil) : Task
       raise ArgumentError.new("type de tâche inconnu : #{kind}") unless Protocol.valid_kind?(kind)
       serialized = params.to_json
+      secrets = data_keys ? data_keys.to_json : ""
       existing = Task.filter(kind: kind, server_id: server.pk, state__in: %w[pending running], params: serialized)
       existing = dossier ? existing.filter(dossier_id: dossier.pk) : existing.filter(dossier_id__isnull: true)
       if task = existing.first
+        # Même demande encore en attente : la clé de données fournie de
+        # nouveau lui est remise.
+        if data_keys && task.state == "pending"
+          task.data_keys = secrets
+          task.save!
+        end
         return task
       end
       task = Task.create!(kind: kind, server: server, dossier: dossier, params: serialized,
         requested_by_id: requested_by.try(&.pk), requested_by_label: requested_by_label || requested_by.try(&.email.to_s) || "system",
-        wave: wave, wave_rank: wave_rank)
+        wave: wave, wave_rank: wave_rank, data_keys: secrets)
       Audit.log(requested_by, "task.enqueue", target: task,
         detail: {"kind" => kind, "dossier" => dossier.try(&.slug).to_s}, actor_label: requested_by ? nil : "system")
       task
@@ -80,6 +87,27 @@ module PartiduoAdmin
       id ? Task.get!(id: id) : nil
     end
 
+    # Clés de données d'une tâche, rendues une seule fois puis effacées
+    # (D-CHF-005) : l'exécutant qui la reprend après une coupure ne les
+    # reçoit plus, la restauration est à redemander avec la clé.
+    TAKE_SECRETS_SQL = <<-SQL
+      UPDATE admin_task t SET data_keys = ''
+        FROM (SELECT id, data_keys FROM admin_task WHERE id = $1 FOR UPDATE) previous
+       WHERE t.id = previous.id
+      RETURNING previous.data_keys
+      SQL
+
+    def self.take_secrets(task : Task) : Array(String)
+      raw = Marten::DB::Connection.default.open do |db|
+        db.query_one?(TAKE_SECRETS_SQL, task.pk!.as(Int64), as: String)
+      end
+      task.data_keys = ""
+      return [] of String if raw.nil? || raw.empty?
+      Array(String).from_json(raw)
+    rescue JSON::ParseException
+      [] of String
+    end
+
     # Compte rendu intermédiaire : lignes de journal, bail prolongé.
     def self.report(task : Task, lines : Array(String), now : Time = Config.now) : Nil
       append_log(task, lines)
@@ -105,6 +133,7 @@ module PartiduoAdmin
           claimed = Task.filter(id: task.pk, state: "running")
             .update(state: state, finished_at: now, lease_until: nil, updated_at: now)
           if claimed == 1
+            task.data_keys = ""
             append_log(task, lines)
             task.state = state
             task.finished_at = now
@@ -132,8 +161,11 @@ module PartiduoAdmin
     # validation (l'état du dossier a pu changer, D-AFN-010).
     DOUBLE_VALIDATION = %w[instance.admin_invite instance.delete]
 
+    # Une tâche qui a reçu une clé de données du cabinet ne se rejoue pas :
+    # la clé n'est plus nulle part, elle est à fournir de nouveau (D-CHF-005).
     def self.retryable?(task : Task) : Bool
-      task.state == "failed" && !DOUBLE_VALIDATION.includes?(task.kind)
+      task.state == "failed" && !DOUBLE_VALIDATION.includes?(task.kind) &&
+        task.params_json["key_provided"]?.try(&.as_bool?) != true
     end
 
     # Rejouer une tâche échouée : même type, mêmes paramètres ; les étapes
@@ -155,6 +187,7 @@ module PartiduoAdmin
     def self.cancel(user : User, task : Task) : Bool
       return false unless task.state == "pending"
       task.state = "cancelled"
+      task.data_keys = ""
       task.finished_at = Config.now
       task.save!
       Audit.log(user, "task.cancel", target: task)

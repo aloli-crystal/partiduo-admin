@@ -16,10 +16,11 @@
 #   release SLUG VERSION                            lien release/ de l'instance
 #   db-exists BASE                                  code 0 si la base existe, 3 sinon
 #   createdb BASE | dropdb BASE                     base du rôle des instances
-#   dump BASE CHEMIN | restore BASE CHEMIN          pg_dump -Fc / pg_restore (chemins sous BACKUP_DIR)
+#   dump BASE CHEMIN|- | restore BASE CHEMIN|-      pg_dump -Fc / pg_restore (chemins sous BACKUP_DIR ;
+#                                                   « - » : sortie ou entrée standard, sauvegardes chiffrées)
 #   backup-dir SLUG                                 répertoire de sauvegarde du dossier
-#   media-archive SLUG LISTE ARCHIVE                archive des pièces jointes
-#   media-restore SLUG ARCHIVE                      pièces jointes remises en place
+#   media-archive SLUG LISTE ARCHIVE|-              archive des pièces jointes
+#   media-restore SLUG ARCHIVE|-                    pièces jointes remises en place
 set -eu
 PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 export PATH
@@ -213,15 +214,19 @@ case "$command" in
     ;;
 
   dump)
-    [ $# -eq 2 ] || die "usage : dump BASE CHEMIN"
+    [ $# -eq 2 ] || die "usage : dump BASE CHEMIN|-"
     check_database "$1"
+    # « - » : sortie standard, chiffrée par l'exécutant (D-CHF-004).
+    [ "$2" = - ] && exec pg_dump -Fc --no-owner "$1"
     check_backup_path "$2"
     exec pg_dump -Fc --no-owner -f "$2" "$1"
     ;;
 
   restore)
-    [ $# -eq 2 ] || die "usage : restore BASE CHEMIN"
+    [ $# -eq 2 ] || die "usage : restore BASE CHEMIN|-"
     check_database "$1"
+    # « - » : entrée standard, déchiffrée par l'exécutant (D-CHF-004).
+    [ "$2" = - ] && exec pg_restore --no-owner --exit-on-error -d "$1"
     check_backup_path "$2"
     exec pg_restore --no-owner --exit-on-error -d "$1" "$2"
     ;;
@@ -236,10 +241,11 @@ case "$command" in
     ;;
 
   media-archive)
-    [ $# -eq 3 ] || die "usage : media-archive SLUG LISTE ARCHIVE"
+    [ $# -eq 3 ] || die "usage : media-archive SLUG LISTE ARCHIVE|-"
     check_slug "$1"
     check_backup_path "$2"
-    check_backup_path "$3"
+    # « - » : sortie standard, chiffrée par l'exécutant (D-CHF-004).
+    [ "$3" = - ] || check_backup_path "$3"
     root=$(media_root "$1")
     # Chemins relatifs au stockage de l'instance seulement : ni absolu, ni
     # « .. », ni option, ni caractère de contrôle (D-CRA-004).
@@ -254,9 +260,10 @@ case "$command" in
     ;;
 
   media-restore)
-    [ $# -eq 2 ] || die "usage : media-restore SLUG ARCHIVE"
+    [ $# -eq 2 ] || die "usage : media-restore SLUG ARCHIVE|-"
     check_slug "$1"
-    check_backup_path "$2"
+    # « - » : entrée standard, déchiffrée par l'exécutant (D-CHF-004).
+    [ "$2" = - ] || check_backup_path "$2"
     root=$(media_root "$1")
     mkdir -p "$root"
     exec tar -C "$root" --no-same-owner -xzf "$2"

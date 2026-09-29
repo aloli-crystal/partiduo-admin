@@ -1,0 +1,92 @@
+{# SPDX-License-Identifier: AGPL-3.0-or-later. Chiffrement des sauvegardes d'un cabinet (DECISIONS D-CHF-001, D-CHF-002) : réglage par défaut, clé publique du cabinet (paire produite dans le navigateur ou par openssl ; la clé privée n'est jamais envoyée), dossiers qui surchargent le réglage. #}{% extend "admin/base.html" %}
+{% block title %}{% translate "admin.encryption.title" %}{% endblock title %}
+{% block crumbs %}{% if nav_fleet %}<li><a href="{% url 'firms' %}">{% translate "admin.firms.title" %}</a></li>{% endif %}<li>{{ firm.name }}</li>{% endblock crumbs %}
+{% block heading %}{% translate "admin.encryption.title" %} · {{ firm.name }}{% endblock heading %}
+{% block content %}
+<script src="{% asset 'admin/js/backup-keys.js' %}" defer></script>
+{% if errors %}<div class="notification is-danger is-light" role="alert">{% for field, messages in errors %}{% for message in messages %}<p>{{ message }}</p>{% endfor %}{% endfor %}</div>{% endif %}
+<div class="pd-grid">
+  <section class="pd-panel" aria-labelledby="pd-enc-setting-title">
+    <h2 id="pd-enc-setting-title">{% translate "admin.encryption.firm_setting" %}</h2>
+    <form method="post" action="{% url 'firm_backups' id: firm.id %}">
+      {% csrf_input %}
+      <fieldset class="pd-fieldset" aria-describedby="pd-enc-setting-help{% if mode_errors %} pd-enc-setting-error{% endif %}">
+        <legend>{% translate "admin.encryption.mode" %}</legend>
+        <div class="pd-choices">{% for mode in modes %}
+          <label class="pd-choice{% if mode.disabled %} is-disabled{% endif %}">
+            <input type="radio" name="mode" value="{{ mode.value }}"{% if mode.checked %} checked{% endif %}{% if mode.disabled %} disabled aria-describedby="pd-enc-needs-key"{% endif %}>
+            <span><strong>{% translate mode.key %}</strong><span class="pd-choice-help">{% translate mode.help %}</span></span>
+          </label>{% endfor %}
+        </div>
+        {% if not firm.has_backup_key %}<p class="help" id="pd-enc-needs-key">{% translate "admin.encryption.cabinet_needs_key" %}</p>{% endif %}
+        <p class="help" id="pd-enc-setting-help">{% translate "admin.encryption.firm_setting_help" %}</p>
+        {% if mode_errors %}<p class="help is-danger" id="pd-enc-setting-error">{% for message in mode_errors %}{{ message }} {% endfor %}</p>{% endif %}
+      </fieldset>
+      <button class="button is-primary" type="submit">{% translate "admin.save" %}</button>
+    </form>
+  </section>
+
+  <section class="pd-panel" aria-labelledby="pd-enc-key-title">
+    <h2 id="pd-enc-key-title">{% translate "admin.encryption.key_title" %}</h2>
+    {% if firm.has_backup_key %}<dl class="pd-dl">
+      <dt>{% translate "admin.encryption.fingerprint" %}</dt><dd class="pd-mono pd-fingerprint">{{ firm.backup_key_display }}</dd>
+      <dt>{% translate "admin.encryption.key_set_at" %}</dt><dd class="pd-mono">{{ set_at }}</dd>
+    </dl>{% else %}<p class="pd-muted">{% translate "admin.encryption.no_key" %}</p>{% endif %}
+    {% if not can_deposit %}<p class="help mt-2">{% translate "admin.encryption.deposit_only_firm_admin" %}</p>{% endif %}
+  </section>
+</div>
+
+{% if can_deposit %}
+<section class="pd-panel" aria-labelledby="pd-enc-generate-title" data-pd-keygen
+  data-msg-generating="{% translate 'admin.encryption.js.generating' %}" data-msg-generated="{% translate 'admin.encryption.js.generated' %}"
+  data-msg-mismatch="{% translate 'admin.encryption.js.mismatch' %}" data-msg-too-short="{% translate 'admin.encryption.js.too_short' %}"
+  data-msg-unsupported="{% translate 'admin.encryption.js.unsupported' %}" data-msg-failed="{% translate 'admin.encryption.js.failed' %}"
+  data-filename="partiduo-{{ firm.id }}-cle-privee.pem">
+  <h2 id="pd-enc-generate-title">{% translate "admin.encryption.generate_title" %}</h2>
+  <p class="mb-3">{% translate "admin.encryption.generate_help" %}</p>
+  <div class="pd-inline">
+    <div class="field"><label class="label" for="pd-keygen-pass">{% translate "admin.encryption.passphrase" %}</label><div class="control"><input class="input" id="pd-keygen-pass" type="password" autocomplete="new-password" minlength="12" aria-describedby="pd-keygen-pass-help"></div></div>
+    <div class="field"><label class="label" for="pd-keygen-confirm">{% translate "admin.encryption.passphrase_confirm" %}</label><div class="control"><input class="input" id="pd-keygen-confirm" type="password" autocomplete="new-password" minlength="12"></div></div>
+    <button class="button" type="button" data-pd-keygen-run disabled>{% translate "admin.encryption.generate" %}</button>
+  </div>
+  <p class="help" id="pd-keygen-pass-help">{% translate "admin.encryption.passphrase_help" %}</p>
+  <p class="pd-status mt-2" role="status" aria-live="polite" data-pd-keygen-status></p>
+  <noscript><p class="help">{% translate "admin.encryption.js.noscript_keygen" %}</p></noscript>
+</section>
+
+<section class="pd-panel" aria-labelledby="pd-enc-local-title">
+  <h2 id="pd-enc-local-title">{% translate "admin.encryption.local_title" %}</h2>
+  <p class="mb-2">{% translate "admin.encryption.local_help" %}</p>
+  <pre class="pd-log" tabindex="0">openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:3072 -aes-256-cbc -out cabinet-prive.pem
+openssl pkey -in cabinet-prive.pem -pubout -out cabinet-public.pem
+openssl pkey -pubin -in cabinet-public.pem -outform DER | openssl dgst -sha256</pre>
+</section>
+
+<form method="post" action="{% url 'firm_backup_key' id: firm.id %}" class="pd-panel" aria-labelledby="pd-enc-deposit-title" data-pd-pubkey
+  data-msg-fingerprint="{% translate 'admin.encryption.js.computed_fingerprint' %}" data-msg-invalid="{% translate 'admin.errors.encryption.public_key' %}">
+  <h2 id="pd-enc-deposit-title">{% if firm.has_backup_key %}{% translate "admin.encryption.replace" %}{% else %}{% translate "admin.encryption.deposit" %}{% endif %}</h2>
+  {% csrf_input %}
+  {% if firm.has_backup_key %}<p class="notification is-warning is-light">{% translate "admin.encryption.replace_warning" %}</p>{% endif %}
+  <div class="field">
+    <label class="label" for="pd-public-key">{% translate "admin.encryption.public_key" %}<span class="pd-required" aria-hidden="true"> *</span></label>
+    <div class="control"><textarea class="textarea pd-mono" id="pd-public-key" name="public_key" rows="8" required spellcheck="false" aria-describedby="pd-public-key-help{% if key_errors %} pd-public-key-error{% endif %}"{% if key_errors %} aria-invalid="true"{% endif %}>{{ public_key }}</textarea></div>
+    <p class="help" id="pd-public-key-help">{% translate "admin.encryption.public_key_help" %}</p>
+    {% if key_errors %}<p class="help is-danger" id="pd-public-key-error">{% for message in key_errors %}{{ message }} {% endfor %}</p>{% endif %}
+    <p class="pd-status pd-mono" role="status" aria-live="polite" data-pd-pubkey-status></p>
+  </div>
+  <button class="button is-primary" type="submit">{% if firm.has_backup_key %}{% translate "admin.encryption.replace" %}{% else %}{% translate "admin.encryption.deposit" %}{% endif %}</button>
+</form>
+{% endif %}
+
+<section class="pd-panel" aria-labelledby="pd-enc-dossiers-title">
+  <h2 id="pd-enc-dossiers-title">{% translate "admin.encryption.dossiers" %}</h2>
+  {% if dossiers %}<div class="table-container" tabindex="0" role="region" aria-labelledby="pd-enc-dossiers-title"><table class="table is-fullwidth is-striped">
+    <caption class="is-sr-only">{% translate "admin.encryption.dossiers" %}</caption>
+    <thead><tr><th scope="col">{% translate "admin.dossiers.fields.slug" %}</th><th scope="col">{% translate "admin.encryption.column" %}</th></tr></thead>
+    <tbody>{% for dossier in dossiers %}<tr>
+      <th scope="row"><a href="{% url 'dossier' id: dossier.id %}">{{ dossier.slug }}</a></th>
+      <td>{% translate dossier.effective_encryption_key %}{% if dossier.encryption_inherited %} <span class="pd-muted">({% translate "admin.encryption.inherited" %})</span>{% endif %}</td>
+    </tr>{% endfor %}</tbody>
+  </table></div>{% else %}<p class="pd-muted">{% translate "admin.dossiers.none" %}</p>{% endif %}
+</section>
+{% endblock content %}

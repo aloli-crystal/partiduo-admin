@@ -6,8 +6,11 @@
 module PartiduoAdmin
   module Protocol
     # Version de l'API de l'exécutant (`/api/agent/v1/…`). Retirer ou renommer
-    # un type de tâche, une clé ou un état incrémente la majeure.
-    API_VERSION = "1.0.0"
+    # un type de tâche, une clé ou un état incrémente la majeure ; en ajouter
+    # incrémente la mineure (1.1.0 : chiffrement des sauvegardes — clés
+    # `encryption`, `backup_encryption`, `media_sha256`, `key_provided` des
+    # paramètres, `secrets.data_keys` de la tâche réclamée, D-CHF-010).
+    API_VERSION = "1.1.0"
 
     # Version majeure du contrat `manage instance` de partiduo-app que
     # l'exécutant sait parler (doc/api/instance-cli.adoc de partiduo-app).

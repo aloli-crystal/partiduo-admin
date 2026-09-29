@@ -76,14 +76,19 @@ module PartiduoAgent
         Plans.run(ctx)
         client.finish(task.id, true, JSON.parse(ctx.result.to_json), "", pending)
         journal.clear
+      rescue error : ApiError
+        # Compte rendu non transmis : la tâche reprendra ; ses clés de
+        # données ne restent pas sur le disque pour autant (D-CHF-006).
+        journal.forget_secrets
+        raise error
       rescue error : StepError
         sink.call("échec : #{error.message}")
         # Journal de reprise conservé : une nouvelle tentative saute les
         # étapes faites.
+        journal.forget_secrets
         client.finish(task.id, false, JSON.parse(ctx.result.to_json), error.message.to_s, pending)
-      rescue error : ApiError
-        raise error
       rescue error
+        journal.forget_secrets
         sink.call("erreur inattendue : #{error.class} #{error.message}")
         client.finish(task.id, false, JSON.parse(ctx.result.to_json), "#{error.class} : #{error.message}", pending)
       end

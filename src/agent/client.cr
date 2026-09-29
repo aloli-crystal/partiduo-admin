@@ -5,8 +5,11 @@ require "json"
 
 module PartiduoAgent
   # Tâche reçue de l'administration.
+  # `data_keys` : clés de données remises une seule fois pour lire une
+  # sauvegarde chiffrée par la clé du cabinet (D-CHF-005), jamais dans les
+  # paramètres.
   record TaskInfo, id : Int64, kind : String, attempt : Int32, dossier : String, params : JSON::Any,
-    requested_by : String
+    requested_by : String, data_keys : Array(String) = [] of String
 
   class ApiError < Exception
   end
@@ -23,7 +26,8 @@ module PartiduoAgent
       task = data["task"]?
       return if task.nil? || task.raw.nil?
       TaskInfo.new(task["id"].as_i64, task["kind"].as_s, task["attempt"]?.try(&.as_i?) || 1,
-        task["dossier"]?.try(&.as_s?) || "", task["params"], task["requested_by"]?.try(&.as_s?) || "")
+        task["dossier"]?.try(&.as_s?) || "", task["params"], task["requested_by"]?.try(&.as_s?) || "",
+        task["secrets"]?.try(&.["data_keys"]?).try(&.as_a?).try(&.compact_map(&.as_s?)) || [] of String)
     end
 
     def log(task_id : Int64, lines : Array(String)) : Nil

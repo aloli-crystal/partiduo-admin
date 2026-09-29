@@ -102,6 +102,38 @@ module PartiduoAgent
     abstract def cert_expiry(host : String) : Time?
     abstract def remove_instance(slug : String, host : String) : Nil
 
+    # --- Sauvegardes chiffrées (D-CHF-004) : le clair passe par un tube
+    # entre l'outil (`pg_dump`, `tar`, `pg_restore`) et l'exécutant, jamais
+    # par le disque.
+    abstract def pg_dump_sealed(database : String, path : String, sealer : BackupCrypto::Sealer) : Nil
+    abstract def tar_create_sealed(slug : String, root : String, list_file : String, path : String,
+                                   sealer : BackupCrypto::Sealer) : Nil
+    abstract def pg_restore_sealed(database : String, path : String, keyring : Keyring) : Nil
+    abstract def tar_extract_sealed(slug : String, path : String, keyring : Keyring) : Nil
+    abstract def pg_restore_list_sealed?(path : String, keyring : Keyring) : Bool
+    abstract def tar_list_sealed?(path : String, keyring : Keyring) : Bool
+    # Authentifie tout le fichier, segment par segment (clé requise).
+    abstract def verify_sealed(path : String, keyring : Keyring) : Nil
+    # Sans clé : en-tête, empreinte de la clé, engagement, découpage.
+    abstract def check_envelope(path : String, fingerprint : String, commitment : String) : Nil
+
+    # Restauration d'une base, chiffrée ou non selon le nom du fichier.
+    def restore_database(database : String, path : String, keyring : Keyring) : Nil
+      BackupCrypto.sealed_path?(path) ? pg_restore_sealed(database, path, keyring) : pg_restore(database, path)
+    end
+
+    def restore_media(slug : String, path : String, keyring : Keyring) : Nil
+      BackupCrypto.sealed_path?(path) ? tar_extract_sealed(slug, path, keyring) : tar_extract(slug, path)
+    end
+
+    def database_readable?(path : String, keyring : Keyring) : Bool
+      BackupCrypto.sealed_path?(path) ? pg_restore_list_sealed?(path, keyring) : pg_restore_list?(path)
+    end
+
+    def media_readable?(path : String, keyring : Keyring) : Bool
+      BackupCrypto.sealed_path?(path) ? tar_list_sealed?(path, keyring) : tar_list?(path)
+    end
+
     # Un chemin de sauvegarde n'est accepté que sous `backup_dir` : aucune
     # tâche ne fait effacer un fichier ailleurs.
     #
@@ -126,10 +158,11 @@ module PartiduoAgent
       line.split('/').none? { |part| part == ".." || part.empty? }
     end
 
-    # Dates de prise des archives d'un dossier (`archive-<horodatage>.dump`
-    # sous son répertoire de sauvegarde).
+    # Dates de prise des archives d'un dossier (`archive-<horodatage>.dump`,
+    # ou `.dump.enc` chiffrée, sous son répertoire de sauvegarde).
     def archive_dates(slug : String) : Array(Time)
-      Dir.glob(File.join(backup_root(slug), "archive-*.dump")).compact_map do |path|
+      root = backup_root(slug)
+      Dir.glob([File.join(root, "archive-*.dump"), File.join(root, "archive-*.dump.enc")]).compact_map do |path|
         PartiduoAdmin::Protocol.archive_taken_at(path)
       end
     end
@@ -325,6 +358,49 @@ module PartiduoAgent
 
     def merge_lists(sources : Array(String), destination : String) : Nil
       op("listes", destination)
+    end
+
+    # Fichiers chiffrés simulés : mode de chaque fichier.
+    getter sealed = {} of String => String
+
+    def pg_dump_sealed(database : String, path : String, sealer : BackupCrypto::Sealer) : Nil
+      op("pg_dump | chiffrement #{sealer.mode_name}", "#{database} #{path}")
+      files[path] = 4096_i64
+      sealed[path] = sealer.mode_name
+    end
+
+    def tar_create_sealed(slug : String, root : String, list_file : String, path : String,
+                          sealer : BackupCrypto::Sealer) : Nil
+      op("tar | chiffrement #{sealer.mode_name}", path)
+      files[path] = 512_i64
+      sealed[path] = sealer.mode_name
+    end
+
+    def pg_restore_sealed(database : String, path : String, keyring : Keyring) : Nil
+      op("déchiffrement | pg_restore", "#{path} #{database}")
+      provisioned << database
+    end
+
+    def tar_extract_sealed(slug : String, path : String, keyring : Keyring) : Nil
+      op("déchiffrement | tar -x", "#{path} #{slug}")
+    end
+
+    def pg_restore_list_sealed?(path : String, keyring : Keyring) : Bool
+      op("déchiffrement | pg_restore --list", path)
+      true
+    end
+
+    def tar_list_sealed?(path : String, keyring : Keyring) : Bool
+      op("déchiffrement | tar -t", path)
+      true
+    end
+
+    def verify_sealed(path : String, keyring : Keyring) : Nil
+      op("authentification", path)
+    end
+
+    def check_envelope(path : String, fingerprint : String, commitment : String) : Nil
+      op("enveloppe", path)
     end
 
     def tar_list?(path : String) : Bool
@@ -627,6 +703,129 @@ module PartiduoAgent
       code == 0
     end
 
+    # --- Sauvegardes chiffrées ------------------------------------------------
+
+    # Commandes des flux : sortie ou entrée standard, jamais un fichier en
+    # clair (la production les fait passer par l'enveloppe de sudo).
+    def dump_argv(database : String) : Array(String)
+      ["pg_dump", "-Fc", "--no-owner", database]
+    end
+
+    def restore_argv(database : String) : Array(String)
+      ["pg_restore", "--no-owner", "--exit-on-error", "-d", database]
+    end
+
+    def media_archive_argv(slug : String, root : String, list_file : String) : Array(String)
+      if !Dir.exists?(root) || !File.exists?(list_file) || File.size(list_file).zero?
+        # Aucune pièce jointe : archive vide, pour une sauvegarde homogène.
+        ["tar", "-czf", "-", "-T", "/dev/null"]
+      else
+        ["tar", "-C", root, "-czf", "-", "-T", list_file]
+      end
+    end
+
+    def media_restore_argv(slug : String) : Array(String)
+      root = File.join(instance_dir(slug), "media")
+      Dir.mkdir_p(root)
+      ["tar", "-C", root, "-xzf", "-"]
+    end
+
+    # Programme dont l'entrée ou la sortie standard est un flux ; rend le
+    # code de sortie et la sortie d'erreur. Jamais de shell.
+    def run_stream(argv : Array(String), env = {} of String => String, input : IO? = nil,
+                   output : IO? = nil) : {Int32, String}
+      log("+ #{argv.map { |arg| arg.includes?(' ') ? "'#{arg}'" : arg }.join(' ')}#{input ? " < déchiffrement" : ""}#{output ? " > chiffrement" : ""}")
+      stderr = IO::Memory.new
+      begin
+        status = Process.run(argv[0], argv[1..], env: env, input: input || Process::Redirect::Close,
+          output: output || Process::Redirect::Close, error: stderr)
+        {status.exit_code, stderr.to_s}
+      rescue ex : IO::Error
+        # Tube rompu : l'outil s'est arrêté avant la fin du flux.
+        {-1, "#{stderr} (#{ex.message})"}
+      end
+    rescue ex : File::NotFoundError
+      raise StepError.new("#{argv[0]} : #{ex.message}")
+    end
+
+    # Sortie d'un programme chiffrée dans `path` (fichier `.part` renommé à
+    # la fin : jamais de sauvegarde incomplète sous son nom définitif).
+    def seal_output(argv : Array(String), path : String, sealer : BackupCrypto::Sealer, env = {} of String => String) : Nil
+      full = guard_backup_path!(path)
+      partial = "#{full}.part"
+      begin
+        Dir.mkdir_p(File.dirname(full))
+        writer = sealer.writer(File.open(partial, "wb", perm: 0o640))
+        code, errors = begin
+          run_stream(argv, env, output: writer)
+        ensure
+          writer.close
+        end
+        unless code == 0
+          raise StepError.new("#{File.basename(argv.find(&.starts_with?("pg_dump")) || argv[0])} (code #{code}) : " \
+                              "#{System.redact_errors(errors).strip[0, 500]? || ""}")
+        end
+        File.rename(partial, full)
+      rescue ex : File::Error | IO::Error
+        raise StepError.new("sauvegarde chiffrée non écrite : #{ex.message}")
+      ensure
+        # Échec : aucun fichier partiel ne reste.
+        File.delete(partial) if File.exists?(partial)
+      end
+    end
+
+    # Fichier déchiffré en flux vers l'entrée d'un programme.
+    def unseal_input(argv : Array(String), path : String, keyring : Keyring, env = {} of String => String) : {Int32, String}
+      keyring.open(guard_backup_path!(path)) { |reader| run_stream(argv, env, input: reader) }
+    end
+
+    def pg_dump_sealed(database : String, path : String, sealer : BackupCrypto::Sealer) : Nil
+      guard_database!(database)
+      seal_output(dump_argv(database), path, sealer, pg_env)
+    end
+
+    def tar_create_sealed(slug : String, root : String, list_file : String, path : String,
+                          sealer : BackupCrypto::Sealer) : Nil
+      seal_output(media_archive_argv(slug, root, list_file), path, sealer)
+    end
+
+    def pg_restore_sealed(database : String, path : String, keyring : Keyring) : Nil
+      guard_database!(database)
+      code, errors = unseal_input(restore_argv(database), path, keyring, pg_env)
+      raise StepError.new("pg_restore (code #{code}) : #{System.redact_errors(errors).strip[0, 500]? || ""}") unless code == 0
+    end
+
+    def tar_extract_sealed(slug : String, path : String, keyring : Keyring) : Nil
+      code, errors = unseal_input(media_restore_argv(slug), path, keyring)
+      raise StepError.new("tar (code #{code}) : #{errors.strip[0, 500]? || ""}") unless code == 0
+    end
+
+    def pg_restore_list_sealed?(path : String, keyring : Keyring) : Bool
+      code, _ = unseal_input(["pg_restore", "--list"], path, keyring, pg_env)
+      code == 0
+    end
+
+    def tar_list_sealed?(path : String, keyring : Keyring) : Bool
+      code, _ = unseal_input(["tar", "-tzf", "-"], path, keyring)
+      code == 0
+    end
+
+    def verify_sealed(path : String, keyring : Keyring) : Nil
+      log("authentification de #{File.basename(path)}")
+      keyring.open(guard_backup_path!(path)) do |reader|
+        buffer = Bytes.new(BackupCrypto::CHUNK_SIZE)
+        while reader.read(buffer) > 0
+        end
+      end
+    end
+
+    def check_envelope(path : String, fingerprint : String, commitment : String) : Nil
+      log("enveloppe de #{File.basename(path)} : structure, empreinte de la clé, engagement")
+      BackupCrypto.check_structure(guard_backup_path!(path), fingerprint, commitment)
+    rescue ex : BackupCrypto::Error
+      raise StepError.new("enveloppe de #{File.basename(path)} : #{ex.message}", "refused")
+    end
+
     def sha256(path : String) : String
       Digest::SHA256.new.file(path).hexfinal
     end
@@ -819,6 +1018,26 @@ module PartiduoAgent
 
     def tar_extract(slug : String, path : String) : Nil
       run!(as_instance(["media-restore", slug, guard_backup_path!(path)]))
+    end
+
+    # Flux chiffrés : l'enveloppe écrit sur sa sortie standard ou lit son
+    # entrée standard (`-`) ; le clair ne touche pas le disque (D-CHF-004).
+    def dump_argv(database : String) : Array(String)
+      as_instance(["dump", database, "-"])
+    end
+
+    def restore_argv(database : String) : Array(String)
+      as_instance(["restore", database, "-"])
+    end
+
+    def media_archive_argv(slug : String, root : String, list_file : String) : Array(String)
+      guard_slug!(slug)
+      as_instance(["media-archive", slug, guard_backup_path!(list_file), "-"])
+    end
+
+    def media_restore_argv(slug : String) : Array(String)
+      guard_slug!(slug)
+      as_instance(["media-restore", slug, "-"])
     end
 
     def cert_expiry(host : String) : Time?

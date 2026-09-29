@@ -158,8 +158,15 @@ module PartiduoAdmin
         return if id.nil?
         backup = Backup.filter(id: id).first
         return if backup.nil?
-        if ok
+        if ok && task.result_json["check"]?.try(&.as_s?) == "envelope"
+          # Clé du cabinet absente : empreinte et enveloppe vérifiées, le
+          # contenu ne l'est qu'avec la clé du cabinet (D-CHF-007).
           backup.test_restored_at = now
+          backup.test_check = "envelope"
+          backup.save!
+        elsif ok
+          backup.test_restored_at = now
+          backup.test_check = "full"
           backup.state = "verified"
           backup.verified_at = now
           backup.save!
@@ -202,7 +209,10 @@ module PartiduoAdmin
 
       def self.record_backup(task : Task, dossier : Dossier, kind : String, data : JSON::Any, now : Time) : Backup
         taken = data["taken_at"]?.try(&.as_s?).try { |value| Time.parse_rfc3339(value) rescue nil } || now
+        mode, fingerprint, commitment, wrapped = encryption_fields(data["encryption"]?)
         Backup.create!(
+          encryption_mode: mode, key_fingerprint: fingerprint, key_commitment: commitment, wrapped_key: wrapped,
+          media_sha256: data["media_sha256"]?.try(&.as_s?) || "",
           dossier: dossier, task: task, kind: kind, state: "done",
           path: data["path"]?.try(&.as_s?) || "",
           media_path: data["media_path"]?.try(&.as_s?) || "",
@@ -212,6 +222,17 @@ module PartiduoAdmin
           taken_at: taken,
           keep_until: taken + (dossier.backup_retention_days || 30).days,
         )
+      end
+
+      # Chiffrement rendu par l'exécutant : mode, empreinte de la clé,
+      # engagement ; la clé de données enveloppée n'est gardée que pour la
+      # clé du cabinet (déchiffrée dans le navigateur de son admin).
+      def self.encryption_fields(encryption : JSON::Any?) : {String, String, String, String}
+        text = ->(key : String) { encryption.try(&.[key]?).try(&.as_s?) || "" }
+        mode = text.call("mode")
+        mode = "none" unless BackupEncryption::MODES.includes?(mode)
+        wrapped = mode == "cabinet" ? text.call("wrapped_key")[0, 2048]? || "" : ""
+        {mode, text.call("key_fingerprint")[0, 64]? || "", text.call("commitment")[0, 64]? || "", wrapped}
       end
 
       def self.record_certificate(dossier : Dossier, result : JSON::Any, now : Time) : Nil

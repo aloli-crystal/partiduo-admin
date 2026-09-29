@@ -37,6 +37,7 @@
       <dt>{% translate "admin.health.last_backup" %}</dt><dd>{% if dossier.last_backup_at %}{{ dossier.last_backup_at|time:"%Y-%m-%d %H:%M" }}{% else %}—{% endif %}</dd>
       <dt>{% translate "admin.health.checked_at" %}</dt><dd>{% if dossier.health_checked_at %}{{ dossier.health_checked_at|time:"%Y-%m-%d %H:%M" }}{% else %}—{% endif %}</dd>
       <dt>{% translate "admin.dossiers.fields.backup_schedule" %}</dt><dd>{% translate dossier.schedule_key %} · {{ dossier.backup_retention_days }} j</dd>
+      <dt>{% translate "admin.encryption.title" %}</dt><dd>{% translate dossier.effective_encryption_key %}{% if dossier.encryption_inherited %} <span class="pd-muted">({% translate "admin.encryption.inherited" %})</span>{% endif %}</dd>
     </dl>
   </section>
 </div>
@@ -64,6 +65,21 @@
     <button class="button" type="submit">{% translate "admin.actions.restore" %}</button>
   </form>
   <p class="help">{% translate "admin.restore.help" %}</p>
+</section>
+{% endif %}
+
+{% if can.encryption %}
+<section class="pd-panel" aria-labelledby="pd-encryption-title">
+  <h2 id="pd-encryption-title">{% translate "admin.encryption.dossier_setting" %}</h2>
+  <form method="post" action="{% url 'dossier_encryption' id: dossier.id %}" class="pd-inline">
+    {% csrf_input %}
+    <div class="field"><label class="label" for="pd-encryption-mode">{% translate "admin.encryption.mode" %}</label><div class="select"><select id="pd-encryption-mode" name="mode" aria-describedby="pd-encryption-help">
+      <option value=""{% if dossier.encryption_inherited %} selected{% endif %}>{% translate "admin.encryption.inherit" %} — {% translate firm_mode_key %}</option>
+      {% for mode in encryption_modes %}<option value="{{ mode.value }}"{% if mode.selected %} selected{% endif %}>{% translate mode.key %}</option>{% endfor %}
+    </select></div></div>
+    <button class="button" type="submit">{% translate "admin.save" %}</button>
+  </form>
+  <p class="help" id="pd-encryption-help">{% translate "admin.encryption.dossier_help" %}</p>
 </section>
 {% endif %}
 
@@ -114,18 +130,19 @@
 
 <section class="pd-panel" aria-labelledby="pd-backups-title">
   <h2 id="pd-backups-title">{% translate "admin.backups.title" %}</h2>
-  {% if backups %}<div class="table-container"><table class="table is-fullwidth is-striped">
+  {% if backups %}<div class="table-container" tabindex="0" role="region" aria-labelledby="pd-backups-title"><table class="table is-fullwidth is-striped">
     <caption class="is-sr-only">{% translate "admin.backups.title" %}</caption>
-    <thead><tr><th scope="col">{% translate "admin.backups.taken_at" %}</th><th scope="col">{% translate "admin.backups.kind" %}</th><th scope="col">{% translate "admin.backups.state" %}</th><th scope="col">{% translate "admin.backups.version" %}</th><th scope="col">{% translate "admin.backups.tested" %}</th><th scope="col"><span class="is-sr-only">{% translate "admin.actions.title" %}</span></th></tr></thead>
+    <thead><tr><th scope="col">{% translate "admin.backups.taken_at" %}</th><th scope="col">{% translate "admin.backups.kind" %}</th><th scope="col">{% translate "admin.backups.state" %}</th><th scope="col">{% translate "admin.encryption.column" %}</th><th scope="col" class="pd-hide-s">{% translate "admin.backups.version" %}</th><th scope="col">{% translate "admin.backups.tested" %}</th><th scope="col"><span class="is-sr-only">{% translate "admin.actions.title" %}</span></th></tr></thead>
     <tbody>{% for backup in backups %}<tr>
       <td class="pd-mono">{% if backup.taken_at %}{{ backup.taken_at|time:"%Y-%m-%d %H:%M" }}{% else %}—{% endif %}</td>
       <td>{% translate backup.kind_key %}{% if backup.frozen %} ({% translate "admin.backups.frozen" %}){% endif %}</td>
       <td><span class="pd-state pd-state-{{ backup.state }}">{% translate backup.state_key %}</span></td>
-      <td class="pd-mono">{{ backup.version|default:"—" }}</td>
-      <td>{% if backup.test_restored_at %}{{ backup.test_restored_at|time:"%Y-%m-%d" }}{% else %}—{% endif %}</td>
-      <td>{% if can.backup %}{% if backup.path != "" %}<form method="post" action="{% url 'backup_test' id: backup.id %}">{% csrf_input %}<button class="button is-small" type="submit">{% translate "admin.actions.test_restore" %}</button></form>{% endif %}{% endif %}</td>
+      <td>{% translate backup.encryption_key %}{% if backup.key_fingerprint != "" %}<br><span class="pd-mono pd-muted" title="{% translate 'admin.encryption.fingerprint' %}">{{ backup.short_fingerprint }}…</span>{% endif %}</td>
+      <td class="pd-mono pd-hide-s">{{ backup.version|default:"—" }}</td>
+      <td>{% if backup.test_restored_at %}{{ backup.test_restored_at|time:"%Y-%m-%d" }}{% if backup.envelope_only %}<br><span class="pd-state pd-state-warning">{% translate "admin.encryption.envelope_only" %}</span><span class="is-sr-only"> : {% translate "admin.encryption.envelope_help" %}</span>{% endif %}{% else %}—{% endif %}</td>
+      <td>{% if can.backup %}{% if backup.path != "" %}<div class="pd-row-actions"><form method="post" action="{% url 'backup_test' id: backup.id %}">{% csrf_input %}<button class="button is-small" type="submit">{% translate "admin.actions.test_restore" %}<span class="is-sr-only"> {% if backup.taken_at %}{{ backup.taken_at|time:"%Y-%m-%d %H:%M" }}{% endif %}</span></button></form>{% if backup.cabinet_sealed %}<a class="button is-small" href="{% url 'backup_unlock' id: backup.id %}?purpose=test">{% translate "admin.encryption.test_with_key" %}<span class="is-sr-only"> {% if backup.taken_at %}{{ backup.taken_at|time:"%Y-%m-%d %H:%M" }}{% endif %}</span></a>{% endif %}</div>{% endif %}{% endif %}</td>
     </tr>{% endfor %}</tbody>
-  </table></div>{% else %}<p class="pd-muted">{% translate "admin.backups.none" %}</p>{% endif %}
+  </table></div>{% if dossier.effective_encryption == "cabinet" %}<p class="help mt-2">{% translate "admin.encryption.envelope_help" %}</p>{% endif %}{% else %}<p class="pd-muted">{% translate "admin.backups.none" %}</p>{% endif %}
 </section>
 
 <section class="pd-panel" aria-labelledby="pd-dossier-tasks-title">

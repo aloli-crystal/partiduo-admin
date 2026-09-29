@@ -180,6 +180,8 @@ module PartiduoAdmin
       if current = user?
         context["nav_fleet"] = Access.fleet?(current)
         context["nav_admin"] = !current.file_manager?
+        # Admin de cabinet : chiffrement des sauvegardes de son cabinet.
+        context["nav_firm_id"] = current.firm_admin? ? current.firm_id : nil
         context["open_alerts"] = Alerts.visible(current).count
         context["pending_approvals"] = Approvals.visible(current).filter(state: "pending").count
       end

@@ -1,0 +1,54 @@
+{# SPDX-License-Identifier: AGPL-3.0-or-later. Clé du cabinet requise (DECISIONS D-CHF-005) : la clé privée est lue et utilisée dans ce navigateur (backup-keys.js), jamais envoyée ; seule la clé de données de cette sauvegarde accompagne la demande. #}{% extend "admin/base.html" %}
+{% block title %}{% translate "admin.encryption.unlock.title" %}{% endblock title %}
+{% block crumbs %}<li><a href="{% url 'dossiers' %}">{% translate "admin.dossiers.title" %}</a></li><li><a href="{% url 'dossier' id: dossier.id %}">{{ dossier.slug }}</a></li><li>{% translate "admin.encryption.unlock.title" %}</li>{% endblock crumbs %}
+{% block heading %}{% translate "admin.encryption.unlock.title" %}{% endblock heading %}
+{% block content %}
+<script src="{% asset 'admin/js/backup-keys.js' %}" defer></script>
+<section class="pd-panel" aria-labelledby="pd-unlock-backup-title">
+  <h2 id="pd-unlock-backup-title">{% translate "admin.encryption.unlock.backup" %}</h2>
+  <p class="mb-3">{% translate "admin.encryption.unlock.intro" %}</p>
+  <dl class="pd-dl">
+    <dt>{% translate "admin.encryption.unlock.purpose" %}</dt><dd>{% translate purpose_key %}{% if is_restore %} · {% translate target_key %}{% if new_slug %} <span class="pd-mono">{{ new_slug }}</span>{% endif %}{% endif %}</dd>
+    <dt>{% translate "admin.backups.taken_at" %}</dt><dd class="pd-mono">{% if backup.taken_at %}{{ backup.taken_at|time:"%Y-%m-%d %H:%M" }}{% else %}—{% endif %}</dd>
+    <dt>{% translate "admin.backups.kind" %}</dt><dd>{% translate backup.kind_key %}</dd>
+    <dt>{% translate "admin.encryption.unlock.required_key" %}</dt><dd class="pd-mono pd-fingerprint">{{ fingerprint }}</dd>
+  </dl>
+  {% if not firm_key %}<p class="notification is-warning is-light mt-3">{% translate "admin.encryption.unlock.older_key" %}</p>{% endif %}
+</section>
+
+<form class="pd-panel" method="post" aria-labelledby="pd-unlock-form-title"
+  action="{% if is_restore %}{% url 'dossier_restore' id: dossier.id %}{% else %}{% url 'backup_test' id: backup.id %}{% endif %}"
+  data-pd-unlock data-wrapped="{{ backup.wrapped_key }}" data-fingerprint="{{ backup.key_fingerprint }}"
+  data-msg-working="{% translate 'admin.encryption.js.working' %}" data-msg-bad-key="{% translate 'admin.encryption.js.bad_key' %}"
+  data-msg-wrong-key="{% translate 'admin.encryption.js.wrong_key' %}" data-msg-missing="{% translate 'admin.encryption.js.missing_key' %}"
+  data-msg-unsupported="{% translate 'admin.encryption.js.unsupported' %}">
+  <h2 id="pd-unlock-form-title">{% translate "admin.encryption.unlock.form_title" %}</h2>
+  <p class="mb-3">{% translate "admin.encryption.unlock.privacy" %}</p>
+  {% csrf_input %}
+  <input type="hidden" name="backup_id" value="{{ backup.id }}">
+  <input type="hidden" name="date" value="{{ date }}">
+  <input type="hidden" name="target" value="{{ target }}">
+  <input type="hidden" name="new_slug" value="{{ new_slug }}">
+  <input type="hidden" name="data_key" value="" data-pd-data-key>
+  {# Champs sans attribut name : jamais envoyés au serveur. #}
+  <div class="field">
+    <label class="label" for="pd-unlock-file">{% translate "admin.encryption.unlock.key_file" %}</label>
+    <div class="control"><input class="input" id="pd-unlock-file" type="file" accept=".pem,.key,.txt,application/x-pem-file" data-pd-key-file></div>
+  </div>
+  <div class="field">
+    <label class="label" for="pd-unlock-text">{% translate "admin.encryption.unlock.key_text" %}</label>
+    <div class="control"><textarea class="textarea pd-mono" id="pd-unlock-text" rows="4" spellcheck="false" autocomplete="off" data-pd-key-text></textarea></div>
+  </div>
+  <div class="field">
+    <label class="label" for="pd-unlock-pass">{% translate "admin.encryption.passphrase" %}</label>
+    <div class="control"><input class="input" id="pd-unlock-pass" type="password" autocomplete="off" aria-describedby="pd-unlock-pass-help" data-pd-key-pass></div>
+    <p class="help" id="pd-unlock-pass-help">{% translate "admin.encryption.unlock.passphrase_help" %}</p>
+  </div>
+  <p class="pd-status mb-3" role="status" aria-live="polite" data-pd-unlock-status></p>
+  <noscript><p class="notification is-warning is-light">{% translate "admin.encryption.unlock.noscript" %}</p></noscript>
+  <div class="buttons">
+    <button class="button is-primary" type="submit">{% translate "admin.encryption.unlock.submit" %}</button>
+    <a class="button" href="{% url 'dossier' id: dossier.id %}">{% translate "admin.cancel" %}</a>
+  </div>
+</form>
+{% endblock content %}

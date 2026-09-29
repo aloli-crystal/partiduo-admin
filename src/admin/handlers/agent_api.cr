@@ -56,6 +56,7 @@ module PartiduoAdmin
     def post
       task = Tasks.claim(server, Config.now)
       return json({"ok" => true, "task" => nil, "api" => Protocol::API_VERSION}.to_json) if task.nil?
+      data_keys = Tasks.take_secrets(task)
       json({
         "ok"   => true,
         "api"  => Protocol::API_VERSION,
@@ -67,6 +68,8 @@ module PartiduoAdmin
           "params"       => task.params_json,
           "requested_by" => task.requested_by_label,
           "lease_until"  => task.lease_until.try(&.to_rfc3339),
+          # Remises une seule fois, jamais dans `params` (D-CHF-005).
+          "secrets" => {"data_keys" => data_keys},
         },
       }.to_json)
     end

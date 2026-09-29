@@ -65,6 +65,9 @@ module PartiduoAgent
     # l'administration, qui l'envoie (D-ADM-009).
     property mail_command : String = ""
     property mail_from : String = ""
+    # Clé du serveur des sauvegardes chiffrées (D-CHF-003) : vide, le
+    # fichier `backup-server.key` de `state_dir`.
+    property server_key_file : String = ""
     property poll_interval : Time::Span = 15.seconds
     property once : Bool = false
     # À blanc : fait échouer la première opération dont le nom contient
@@ -97,6 +100,9 @@ module PartiduoAgent
           config.mail_command = value
         end
         parser.on("--mail-from ADRESSE", "expéditeur des invitations remises par le serveur") { |value| config.mail_from = value }
+        parser.on("--server-key FICHIER", "clé du serveur des sauvegardes chiffrées (défaut : <state-dir>/backup-server.key)") do |value|
+          config.server_key_file = value
+        end
         parser.on("--poll SECONDES", "intervalle d'interrogation") { |value| config.poll_interval = value.to_i.seconds }
         parser.on("--once", "traite au plus une tâche puis s'arrête") { config.once = true }
         parser.on("--fail-on TEXTE", "à blanc seulement : fait échouer la première opération qui contient TEXTE " \
@@ -138,6 +144,10 @@ module PartiduoAgent
     # Échec simulé : jamais sur un vrai système.
     private def validate_fail_on! : Nil
       raise ArgumentError.new("--fail-on n'est permis qu'à blanc") if fail_on && !mode.dry_run?
+    end
+
+    def server_key_path : String
+      server_key_file.presence || File.join(state_dir, "backup-server.key")
     end
 
     def local? : Bool

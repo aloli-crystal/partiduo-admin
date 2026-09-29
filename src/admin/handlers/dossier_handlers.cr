@@ -110,27 +110,47 @@ module PartiduoAdmin
       managers = user.file_manager? ? [] of User : User.filter(firm_id: dossier.firm_id, role: Config::FILE_MANAGER, active: true).order("email").to_a
       assigned = Assignment.filter(dossier_id: dossier.pk).map(&.user_id)
       page("admin/dossier.html", {
-        "dossier"   => dossier,
-        "backups"   => Backup.filter(dossier_id: dossier.pk).order("-id").to_a.first(30),
-        "tasks"     => Task.filter(dossier_id: dossier.pk).order("-id").to_a.first(20),
-        "approvals" => Approval.filter(dossier_id: dossier.pk).order("-id").to_a.first(10),
-        "alerts"    => Alert.filter(dossier_id: dossier.pk, resolved_at__isnull: true).to_a,
-        "releases"  => Release.all.order("-created_at").exclude(version: dossier.version).to_a,
-        "managers"  => managers.map { |manager| {"id" => manager.pk.to_s, "email" => manager.email.to_s, "assigned" => assigned.includes?(manager.pk)} },
-        "can"       => Flags.new({
-          "modules"         => Access.can?(user, :modules, dossier) && dossier.state == "active",
-          "backup"          => Access.can?(user, :backup, dossier) && %w[active suspended].includes?(dossier.state),
-          "suspend"         => Access.can?(user, :suspend, dossier) && dossier.state == "active",
-          "resume"          => Access.can?(user, :resume, dossier) && dossier.state == "suspended",
-          "archive"         => Access.can?(user, :archive, dossier) && %w[active suspended].includes?(dossier.state),
-          "restore_archive" => Access.can?(user, :restore_archive, dossier) && dossier.state == "archived",
-          "restore"         => Access.can?(user, :restore, dossier) && %w[active suspended].includes?(dossier.state),
-          "upgrade"         => Access.can?(user, :upgrade, dossier) && dossier.state == "active",
-          "delete"          => Access.can?(user, :request_delete, dossier) && dossier.state == "archived",
-          "access"          => Access.can?(user, :request_admin_invite, dossier) && dossier.state == "active",
-          "assign"          => !user.file_manager?,
-        }),
-        "today" => Config.now.to_s("%F"),
+        "dossier"          => dossier,
+        "backups"          => Backup.filter(dossier_id: dossier.pk).order("-id").to_a.first(30),
+        "tasks"            => Task.filter(dossier_id: dossier.pk).order("-id").to_a.first(20),
+        "approvals"        => Approval.filter(dossier_id: dossier.pk).order("-id").to_a.first(10),
+        "alerts"           => Alert.filter(dossier_id: dossier.pk, resolved_at__isnull: true).to_a,
+        "releases"         => Release.all.order("-created_at").exclude(version: dossier.version).to_a,
+        "managers"         => managers.map { |manager| {"id" => manager.pk.to_s, "email" => manager.email.to_s, "assigned" => assigned.includes?(manager.pk)} },
+        "can"              => flags(dossier),
+        "encryption_modes" => encryption_modes(dossier),
+        "firm_mode_key"    => dossier.firm!.backup_encryption_key,
+        "today"            => Config.now.to_s("%F"),
+      })
+    end
+
+    # Chiffrement des sauvegardes du dossier réglable par cet utilisateur.
+    private def encryption?(dossier : Dossier) : Bool
+      BackupEncryption.can_manage?(user, dossier.firm!) && Access.can?(user, :restore, dossier) &&
+        %w[creating active suspended].includes?(dossier.state)
+    end
+
+    private def encryption_modes(dossier : Dossier)
+      BackupEncryption::MODES.map do |mode|
+        {"value" => mode, "key" => "admin.encryption.modes.#{mode}", "selected" => dossier.backup_encryption == mode}
+      end
+    end
+
+    # Actions permises au rôle dans l'état du dossier.
+    private def flags(dossier : Dossier) : Flags
+      Flags.new({
+        "modules"         => Access.can?(user, :modules, dossier) && dossier.state == "active",
+        "backup"          => Access.can?(user, :backup, dossier) && %w[active suspended].includes?(dossier.state),
+        "suspend"         => Access.can?(user, :suspend, dossier) && dossier.state == "active",
+        "resume"          => Access.can?(user, :resume, dossier) && dossier.state == "suspended",
+        "archive"         => Access.can?(user, :archive, dossier) && %w[active suspended].includes?(dossier.state),
+        "restore_archive" => Access.can?(user, :restore_archive, dossier) && dossier.state == "archived",
+        "restore"         => Access.can?(user, :restore, dossier) && %w[active suspended].includes?(dossier.state),
+        "upgrade"         => Access.can?(user, :upgrade, dossier) && dossier.state == "active",
+        "delete"          => Access.can?(user, :request_delete, dossier) && dossier.state == "archived",
+        "access"          => Access.can?(user, :request_admin_invite, dossier) && dossier.state == "active",
+        "assign"          => !user.file_manager?,
+        "encryption"      => encryption?(dossier),
       })
     end
   end
@@ -190,14 +210,26 @@ module PartiduoAdmin
     end
   end
 
+  # Restauration à une date. Si la sauvegarde retenue est chiffrée par la
+  # clé du cabinet et qu'aucune clé de données n'accompagne la demande, la
+  # page de la clé du cabinet la demande d'abord (D-CHF-005).
   class DossierRestoreHandler < ScreenHandler
     def post
       dossier = dossier!
       date = Time.parse(field("date"), "%F", Time::Location::UTC) rescue nil
+      backup_id = field("backup_id").to_i64?
+      if date && backup_id.nil? && field("data_key").empty? && Access.can?(user, :restore, dossier)
+        backup = Fleet.backup_for(dossier, date)
+        if backup && backup.cabinet_sealed
+          search = URI::Params.encode({"purpose" => "restore", "target" => field("target"), "new_slug" => field("new_slug"),
+                                       "date" => field("date")})
+          return go("/backups/#{backup.pk}/unlock?#{search}")
+        end
+      end
       outcome = if date.nil?
                   Fleet::Outcome(Task).failure("date", "admin.errors.invalid")
                 else
-                  Fleet.restore(user, dossier, date, field("target"), field("new_slug"))
+                  Fleet.restore(user, dossier, date, field("target"), field("new_slug"), backup_id, field("data_key"))
                 end
       if outcome.ok?
         flash["success"] = I18n.t("admin.tasks.enqueued")
@@ -242,7 +274,7 @@ module PartiduoAdmin
     def post
       backup = Backup.filter(id: id_param).first
       raise Access::Denied.new("backup") if backup.nil? || !Access.in_scope?(user, backup.dossier!)
-      outcome = Fleet.test_restore(user, backup)
+      outcome = Fleet.test_restore(user, backup, field("data_key"))
       flash[outcome.ok? ? "success" : "danger"] = outcome.ok? ? I18n.t("admin.tasks.enqueued") : outcome.errors.values.flatten.map { |key| I18n.t(key) }.join(" ")
       go("/dossiers/#{backup.dossier_id}")
     end

@@ -68,6 +68,8 @@ module PartiduoAdmin
     field :backup_schedule, :string, max_size: 8, default: "daily"
     field :backup_retention_days, :int, default: 30
     field :test_restore_days, :int, default: 30
+    # Chiffrement des sauvegardes : vide, celui du cabinet (D-CHF-001).
+    field :backup_encryption, :string, max_size: 16, blank: true, default: ""
     field :service_state, :string, max_size: 16, blank: true, default: ""
     field :database_state, :string, max_size: 16, blank: true, default: ""
     field :cert_expires_at, :date_time, null: true, blank: true
@@ -97,6 +99,20 @@ module PartiduoAdmin
 
     def schedule_key : String
       "admin.schedules.#{backup_schedule}"
+    end
+
+    # Chiffrement effectif des prochaines sauvegardes : celui du dossier,
+    # sinon celui du cabinet.
+    def effective_encryption : String
+      backup_encryption.presence || firm.try(&.backup_encryption) || "server"
+    end
+
+    def effective_encryption_key : String
+      "admin.encryption.modes.#{effective_encryption}"
+    end
+
+    def encryption_inherited : Bool
+      backup_encryption.to_s.empty?
     end
 
     # États relevés par la supervision (`running`, `stopped`, `ok`,
@@ -184,6 +200,10 @@ module PartiduoAdmin
     field :result, :text, blank: true, default: ""
     field :error, :text, blank: true, default: ""
     field :log, :text, blank: true, default: ""
+    # Clés de données (JSON, base64) à remettre une seule fois à
+    # l'exécutant : effacées dès la réclamation, l'annulation ou la fin
+    # (D-CHF-005). Jamais affichées ni journalisées.
+    field :data_keys, :text, blank: true, default: ""
     field :created_at, :date_time, auto_now_add: true
     field :updated_at, :date_time, auto_now: true
 
@@ -247,10 +267,38 @@ module PartiduoAdmin
     field :test_restored_at, :date_time, null: true, blank: true
     field :keep_until, :date_time, null: true, blank: true
     field :pruned_at, :date_time, null: true, blank: true
+    # Chiffrement (D-CHF-001) : mode de la sauvegarde, figé à sa prise ;
+    # empreinte de la clé, engagement sur la clé de données et clé de
+    # données enveloppée (déchiffrée dans le navigateur de l'admin du
+    # cabinet pour une restauration).
+    field :encryption_mode, :string, max_size: 16, default: "none"
+    field :key_fingerprint, :string, max_size: 64, blank: true, default: ""
+    field :key_commitment, :string, max_size: 64, blank: true, default: ""
+    field :wrapped_key, :text, blank: true, default: ""
+    field :media_sha256, :string, max_size: 64, blank: true, default: ""
+    # Dernière restauration test : `full` (relue) ou `envelope` (clé du
+    # cabinet absente : empreinte et enveloppe seulement).
+    field :test_check, :string, max_size: 16, blank: true, default: ""
     field :created_at, :date_time, auto_now_add: true
 
     def kind_key : String
       "admin.backups.kinds.#{kind}"
+    end
+
+    def encryption_key : String
+      "admin.encryption.modes.#{encryption_mode}"
+    end
+
+    def cabinet_sealed : Bool
+      encryption_mode == "cabinet"
+    end
+
+    def short_fingerprint : String
+      key_fingerprint.to_s[0, 16]? || ""
+    end
+
+    def envelope_only : Bool
+      test_check == "envelope"
     end
 
     def state_key : String

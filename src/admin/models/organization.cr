@@ -9,11 +9,36 @@ module PartiduoAdmin
     field :siren, :string, max_size: 9, blank: true, default: ""
     field :email, :string, max_size: 254, blank: true, default: ""
     field :active, :bool, default: true
+    # Chiffrement des sauvegardes de ses dossiers (D-CHF-001) : `none`,
+    # `server` ou `cabinet` ; valeur par défaut, surchargeable par dossier.
+    field :backup_encryption, :string, max_size: 16, default: "server"
+    # Clé publique RSA du cabinet (PEM) et son empreinte SHA-256 ; la clé
+    # privée n'est jamais ici (D-CHF-002).
+    field :backup_public_key, :text, blank: true, default: ""
+    field :backup_key_fingerprint, :string, max_size: 64, blank: true, default: ""
+    field :backup_key_set_at, :date_time, null: true, blank: true
     field :created_at, :date_time, auto_now_add: true
     field :updated_at, :date_time, auto_now: true
 
     def to_s(io : IO) : Nil
       io << name
+    end
+
+    def backup_encryption_key : String
+      "admin.encryption.modes.#{backup_encryption}"
+    end
+
+    # Clé du cabinet déposée : `nil` sinon (chaîne vide vraie en gabarit).
+    def backup_key? : String?
+      backup_key_fingerprint.presence
+    end
+
+    def has_backup_key : Bool
+      !backup_key_fingerprint.to_s.empty?
+    end
+
+    def backup_key_display : String
+      BackupCrypto.display_fingerprint(backup_key_fingerprint.to_s)
     end
   end
 

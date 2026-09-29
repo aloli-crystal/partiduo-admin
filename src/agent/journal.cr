@@ -41,6 +41,25 @@ module PartiduoAgent
       value
     end
 
+    def values : Hash(String, String)
+      @values.dup
+    end
+
+    # Étape à refaire (sauvegarde reprise sans sa clé de données).
+    def unmark(step : String) : Nil
+      @done.delete(step)
+      save
+    end
+
+    # Clés de données (`secret.*`) oubliées : une tâche terminée ne laisse
+    # sur le disque aucune clé de données d'une sauvegarde chiffrée
+    # (D-CHF-006).
+    def forget_secrets : Nil
+      return unless @values.keys.any?(&.starts_with?("secret."))
+      @values.reject! { |key, _| key.starts_with?("secret.") }
+      save
+    end
+
     def reset : Nil
       @done.clear
       @values.clear

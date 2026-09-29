@@ -53,7 +53,7 @@ body { color: var(--pd-ink); font-family: var(--bulma-family-primary); }
 .pd-dl dt { color: var(--pd-muted); }
 .pd-dl dd { margin: 0; overflow-wrap: anywhere; }
 .table { background: var(--pd-surface); }
-.table-container { border: 1px solid var(--pd-rule); border-radius: var(--bulma-radius); }
+.table-container { position: relative; border: 1px solid var(--pd-rule); border-radius: var(--bulma-radius); }
 .table th { white-space: nowrap; }
 .pd-log { background: #0b2a32; color: #e3eced; font-family: var(--bulma-family-code); font-size: .8rem; padding: .75rem;
   border-radius: var(--bulma-radius); max-height: 32rem; overflow: auto; white-space: pre-wrap; }
@@ -72,6 +72,20 @@ fieldset.pd-fieldset legend { font-weight: 600; margin-block-end: .35rem; }
 .pd-checks { display: flex; flex-wrap: wrap; gap: .25rem 1.25rem; }
 .pd-checks label { min-height: 32px; display: inline-flex; align-items: center; gap: .35rem; }
 
+/* Chiffrement des sauvegardes : choix du mode, empreintes, messages des scripts. */
+.pd-choices { display: grid; gap: .5rem; margin-block-end: .5rem; }
+.pd-choice { display: flex; gap: .6rem; align-items: flex-start; min-height: 44px; padding: .5rem .75rem;
+  border: 1px solid var(--pd-rule); border-radius: var(--bulma-radius); cursor: pointer; }
+.pd-choice input { margin-block-start: .3rem; }
+.pd-choice:has(input:checked) { border-color: var(--pd-focus); background: var(--pd-row-alt); }
+.pd-choice.is-disabled { cursor: not-allowed; opacity: .75; }
+.pd-choice-help { display: block; color: var(--pd-muted); font-size: .88rem; }
+.pd-fingerprint { overflow-wrap: anywhere; letter-spacing: .02em; }
+.pd-status:empty { display: none; }
+.pd-status.is-error { color: var(--pd-gap); }
+.pd-row-actions { display: flex; flex-wrap: wrap; gap: .35rem; }
+.pd-row-actions form { display: inline; }
+
 .pd-auth-body { display: flex; flex-direction: column; min-height: 100vh; }
 .pd-auth { flex: 1; display: flex; justify-content: center; align-items: flex-start; padding: 2.5rem 1rem 3rem; }
 .pd-auth:focus { outline: none; }
@@ -82,6 +96,7 @@ fieldset.pd-fieldset legend { font-weight: 600; margin-block-end: .35rem; }
 
 @media (max-width: 768px) {
   .pd-app { grid-template-columns: 1fr; }
+  .pd-hide-s { display: none; }
   .pd-side { order: 3; }
   .pd-main { padding: 1rem; }
 }

@@ -166,6 +166,11 @@ module PartiduoAdmin
       return Outcome(Task).failure("base", "admin.errors.dossier.state") unless from.split('|').includes?(dossier.state)
       params = Tasks.dossier_params(dossier)
       params["reason"] = any(reason.presence || action)
+      if action == "archive"
+        # Archive chiffrée selon le réglage du dossier (D-CHF-001).
+        settings = BackupEncryption.task_settings(dossier) || return Outcome(Task).failure("base", "admin.errors.encryption.no_key")
+        params["encryption"] = settings
+      end
       task = Tasks.enqueue(kind, dossier.server!, params, user, dossier)
       Audit.log(user, "dossier.#{action}", target: dossier, detail: {"reason" => reason})
       Outcome(Task).new(task)
@@ -188,64 +193,126 @@ module PartiduoAdmin
         return Outcome(Task).failure("base", "admin.errors.forbidden")
       end
       return Outcome(Task).failure("base", "admin.errors.dossier.state") unless %w[active suspended].includes?(dossier.state)
+      settings = BackupEncryption.task_settings(dossier) || return Outcome(Task).failure("base", "admin.errors.encryption.no_key")
       params = Tasks.dossier_params(dossier)
       params["kind"] = any(kind)
+      params["encryption"] = settings
       task = Tasks.enqueue("backup.run", dossier.server!, params, user, dossier)
-      Audit.log(user, "backup.request", target: dossier, detail: {"kind" => kind}, actor_label: user ? nil : "system")
+      Audit.log(user, "backup.request", target: dossier, detail: {"kind" => kind, "encryption" => dossier.effective_encryption},
+        actor_label: user ? nil : "system")
       Outcome(Task).new(task)
     end
 
-    def self.test_restore(user : User?, backup : Backup) : Outcome(Task)
+    # Paramètres de lecture d'une sauvegarde : fichiers, empreintes, mode et
+    # enveloppe (D-CHF-001).
+    private def self.source_params(params : Tasks::Params, backup : Backup) : Nil
+      params["backup_id"] = any(backup.pk!.as(Int64))
+      params["path"] = any(backup.path)
+      params["media_path"] = any(backup.media_path)
+      params["sha256"] = any(backup.sha256)
+      params["media_sha256"] = any(backup.media_sha256) unless backup.media_sha256.to_s.empty?
+      params["backup_encryption"] = BackupEncryption.source(backup) unless backup.encryption_mode == "none"
+    end
+
+    # Restauration test. Sauvegarde « clé du cabinet » : sans `data_key`,
+    # l'exécutant ne vérifie que l'empreinte et l'enveloppe ; avec la clé de
+    # données déchiffrée dans le navigateur de l'admin du cabinet, il la
+    # relit en entier (D-CHF-007).
+    def self.test_restore(user : User?, backup : Backup, data_key : String = "") : Outcome(Task)
       dossier = backup.dossier!
       if user && !Access.can?(user, :test_restore, dossier)
         return Outcome(Task).failure("base", "admin.errors.forbidden")
       end
       return Outcome(Task).failure("base", "admin.errors.backup.unusable") unless %w[done verified].includes?(backup.state)
+      keys = nil
+      unless data_key.empty?
+        accepted = BackupEncryption.accept_data_key(backup, data_key) || return Outcome(Task).failure("data_key", "admin.errors.encryption.wrong_key")
+        keys = [accepted]
+      end
       params = Tasks.dossier_params(dossier)
-      params["backup_id"] = any(backup.pk!.as(Int64))
-      params["path"] = any(backup.path)
-      params["media_path"] = any(backup.media_path)
-      params["sha256"] = any(backup.sha256)
-      task = Tasks.enqueue("backup.test_restore", dossier.server!, params, user, dossier)
-      Audit.log(user, "backup.test_restore", target: dossier, detail: {"backup" => backup.pk.to_s}, actor_label: user ? nil : "system")
+      source_params(params, backup)
+      params["key_provided"] = any(true) if keys
+      task = Tasks.enqueue("backup.test_restore", dossier.server!, params, user, dossier, data_keys: keys)
+      Audit.log(user, "backup.test_restore", target: dossier,
+        detail: {"backup" => backup.pk.to_s, "encryption" => backup.encryption_mode.to_s, "key_provided" => (!keys.nil?).to_s},
+        actor_label: user ? nil : "system")
       Outcome(Task).new(task)
+    end
+
+    # Sauvegarde qu'une restauration à cette date reprendrait (dernière prise
+    # ce jour-là ou avant).
+    def self.backup_for(dossier : Dossier, date : Time) : Backup?
+      Backup.filter(dossier_id: dossier.pk, state__in: %w[done verified], taken_at__lte: date.at_end_of_day)
+        .order("-taken_at").first
     end
 
     # Restauration à une date : la dernière sauvegarde prise à cette date ou
     # avant, dans une instance neuve (`new`, sous-domaine `new_slug`) ou en
     # remplacement (`replace`, après une sauvegarde de sûreté).
-    def self.restore(user : User, dossier : Dossier, date : Time, target : String, new_slug : String = "") : Outcome(Task)
+    #
+    # Sauvegarde « clé du cabinet » (D-CHF-005) : `data_key` est la clé de
+    # données que le navigateur de l'admin du cabinet a déchiffrée avec sa
+    # clé privée ; elle est contrôlée ici (engagement), remise une seule
+    # fois à l'exécutant, jamais conservée ni journalisée. `backup_id` fixe
+    # la sauvegarde dont la clé a été déchiffrée.
+    def self.restore(user : User, dossier : Dossier, date : Time, target : String, new_slug : String = "",
+                     backup_id : Int64? = nil, data_key : String = "") : Outcome(Task)
       return Outcome(Task).failure("base", "admin.errors.forbidden") unless Access.can?(user, :restore, dossier)
       return Outcome(Task).failure("target", "admin.errors.invalid") unless %w[new replace].includes?(target)
       return Outcome(Task).failure("base", "admin.errors.dossier.state") unless %w[active suspended].includes?(dossier.state)
-      backup = Backup.filter(dossier_id: dossier.pk, state__in: %w[done verified], taken_at__lte: date.at_end_of_day)
-        .order("-taken_at").first
+      backup = restored_backup(dossier, date, backup_id)
       return Outcome(Task).failure("date", "admin.errors.backup.none_before") if backup.nil?
+      keys, refusal = restore_keys(backup, data_key)
+      return Outcome(Task).failure("data_key", refusal) if refusal
       params = Tasks.dossier_params(dossier)
-      params["backup_id"] = any(backup.pk!.as(Int64))
-      params["path"] = any(backup.path)
-      params["media_path"] = any(backup.media_path)
-      params["sha256"] = any(backup.sha256)
+      source_params(params, backup)
+      params["key_provided"] = any(true) if keys
       params["target"] = any(target)
-      if target == "new"
-        slug = new_slug.strip.downcase
-        return Outcome(Task).failure("new_slug", "admin.errors.dossier.slug") unless Protocol.valid_slug?(slug)
-        return Outcome(Task).failure("new_slug", "admin.errors.dossier.slug_taken") if Dossier.filter(slug: slug).exists?
-        # Instance neuve : un certificat de plus, compté comme à la création.
-        if LetsEncrypt.quota_reached?(dossier.server!.domain.to_s, Config.now)
-          return Outcome(Task).failure("base", "admin.errors.dossier.quota")
-        end
-        copy = Dossier.create!(slug: slug, label: dossier.label, regime: dossier.regime, locale: dossier.locale,
-          siren: dossier.siren, vat_number: dossier.vat_number, modules: dossier.modules, extensions: dossier.extensions,
-          admin_email: dossier.admin_email, server: dossier.server!, firm: dossier.firm!, payer: dossier.payer!,
-          version: backup.version.presence || dossier.version, state: "creating")
-        params["new_slug"] = any(slug)
-        params["new_host"] = any(copy.host)
+      if target == "replace"
+        # Sauvegarde de sûreté, chiffrée selon le réglage actuel.
+        params["encryption"] = BackupEncryption.task_settings(dossier) || return Outcome(Task).failure("base", "admin.errors.encryption.no_key")
       end
-      task = Tasks.enqueue("backup.restore", dossier.server!, params, user, dossier)
+      if target == "new"
+        field, refusal = restore_copy(dossier, backup, new_slug, params)
+        return Outcome(Task).failure(field, refusal) if refusal
+      end
+      task = Tasks.enqueue("backup.restore", dossier.server!, params, user, dossier, data_keys: keys)
       Audit.log(user, "backup.restore", target: dossier,
-        detail: {"backup" => backup.pk.to_s, "target" => target, "new_slug" => new_slug, "date" => date.to_s("%F")})
+        detail: {"backup" => backup.pk.to_s, "target" => target, "new_slug" => new_slug, "date" => date.to_s("%F"),
+                 "encryption" => backup.encryption_mode.to_s, "key_provided" => (!keys.nil?).to_s})
       Outcome(Task).new(task)
+    end
+
+    # Instance neuve d'une restauration : dossier créé (état `creating`),
+    # sous-domaine et hôte dans les paramètres ; ou champ et motif du refus.
+    private def self.restore_copy(dossier : Dossier, backup : Backup, new_slug : String, params : Tasks::Params) : {String, String?}
+      slug = new_slug.strip.downcase
+      return {"new_slug", "admin.errors.dossier.slug"} unless Protocol.valid_slug?(slug)
+      return {"new_slug", "admin.errors.dossier.slug_taken"} if Dossier.filter(slug: slug).exists?
+      # Instance neuve : un certificat de plus, compté comme à la création.
+      return {"base", "admin.errors.dossier.quota"} if LetsEncrypt.quota_reached?(dossier.server!.domain.to_s, Config.now)
+      copy = Dossier.create!(slug: slug, label: dossier.label, regime: dossier.regime, locale: dossier.locale,
+        siren: dossier.siren, vat_number: dossier.vat_number, modules: dossier.modules, extensions: dossier.extensions,
+        admin_email: dossier.admin_email, server: dossier.server!, firm: dossier.firm!, payer: dossier.payer!,
+        version: backup.version.presence || dossier.version, state: "creating",
+        backup_encryption: dossier.backup_encryption.to_s)
+      params["new_slug"] = any(slug)
+      params["new_host"] = any(copy.host)
+      {"", nil}
+    end
+
+    private def self.restored_backup(dossier : Dossier, date : Time, backup_id : Int64?) : Backup?
+      return backup_for(dossier, date) if backup_id.nil?
+      Backup.filter(id: backup_id, dossier_id: dossier.pk, state__in: %w[done verified]).first
+    end
+
+    # Clé de données à remettre (sauvegarde « clé du cabinet ») ou motif du
+    # refus : absente ou fausse.
+    private def self.restore_keys(backup : Backup, data_key : String) : {Array(String)?, String?}
+      return {nil, nil} unless backup.cabinet_sealed
+      return {nil, "admin.errors.encryption.key_required"} if data_key.empty?
+      accepted = BackupEncryption.accept_data_key(backup, data_key)
+      accepted ? {[accepted], nil} : {nil, "admin.errors.encryption.wrong_key"}
     end
 
     # --- Montée de version (ADR-008 D5) -------------------------------------
@@ -256,9 +323,12 @@ module PartiduoAdmin
       end
       return Outcome(Task).failure("base", "admin.errors.dossier.not_active") unless dossier.state == "active"
       return Outcome(Task).failure("release_id", "admin.errors.release.same") if dossier.version == release.version
+      settings = BackupEncryption.task_settings(dossier) || return Outcome(Task).failure("base", "admin.errors.encryption.no_key")
       params = Tasks.dossier_params(dossier)
       params["from_version"] = any(dossier.version)
       params["version"] = any(release.version)
+      # Sauvegarde préalable chiffrée selon le réglage du dossier.
+      params["encryption"] = settings
       task = Tasks.enqueue("instance.upgrade", dossier.server!, params, user, dossier, wave: wave, wave_rank: rank)
       Audit.log(user, "dossier.upgrade", target: dossier, detail: {"from" => dossier.version.to_s, "to" => release.version.to_s})
       Outcome(Task).new(task)

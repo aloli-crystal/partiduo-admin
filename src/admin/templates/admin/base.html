@@ -38,6 +38,7 @@
           <li><a href="{% url 'payer_dossiers' %}">{% translate "admin.payers.by_payer" %}</a></li>
           {% if nav_admin %}<li><a href="{% url 'users' %}">{% translate "admin.users.title" %}</a></li>
           <li><a href="{% url 'audit' %}">{% translate "admin.audit.title" %}</a></li>{% endif %}
+          {% if nav_firm_id %}<li><a href="{% url 'firm_backups' id: nav_firm_id %}">{% translate "admin.encryption.title" %}</a></li>{% endif %}
           {% if nav_fleet %}<li><a href="{% url 'firms' %}">{% translate "admin.firms.title" %}</a></li>
           <li><a href="{% url 'servers' %}">{% translate "admin.servers.title" %}</a></li>
           <li><a href="{% url 'releases' %}">{% translate "admin.releases.title" %}</a></li>{% endif %}

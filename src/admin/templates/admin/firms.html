@@ -3,7 +3,7 @@
 {% block crumbs %}<li>{% translate "admin.firms.title" %}</li>{% endblock crumbs %}
 {% block heading %}{% translate "admin.firms.title" %}{% endblock heading %}
 {% block content %}
-{% if firms %}<ul class="pd-panel">{% for firm in firms %}<li>{{ firm.name }}{% if firm.siren %} · <span class="pd-mono">{{ firm.siren }}</span>{% endif %}{% if firm.email %} · {{ firm.email }}{% endif %}</li>{% endfor %}</ul>{% endif %}
+{% if firms %}<ul class="pd-panel">{% for firm in firms %}<li class="mb-1">{{ firm.name }}{% if firm.siren %} · <span class="pd-mono">{{ firm.siren }}</span>{% endif %}{% if firm.email %} · {{ firm.email }}{% endif %} · <a href="{% url 'firm_backups' id: firm.id %}">{% translate "admin.encryption.title" %}<span class="is-sr-only"> {{ firm.name }}</span></a> <span class="pd-muted">({% translate firm.backup_encryption_key %})</span></li>{% endfor %}</ul>{% endif %}
 <form method="post" action="{% url 'firms' %}" class="pd-panel" novalidate>
   <h2 class="title is-6">{% translate "admin.firms.new" %}</h2>
   {% csrf_input %}

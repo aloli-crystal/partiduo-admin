@@ -28,10 +28,14 @@ module AdminSpec
       @server.close
     end
 
-    def push(id : Int64, kind : String, params : Hash, attempt : Int32 = 1) : Nil
-      queue << {"id" => JSON::Any.new(id), "kind" => JSON::Any.new(kind), "attempt" => JSON::Any.new(attempt.to_i64),
-                "dossier" => JSON::Any.new(params["slug"]?.to_s), "params" => JSON.parse(params.to_json),
-                "requested_by" => JSON::Any.new("spec@example.com")}
+    # `data_keys` : clés de données remises avec la tâche (restauration d'une
+    # sauvegarde chiffrée par la clé du cabinet).
+    def push(id : Int64, kind : String, params : Hash, attempt : Int32 = 1, data_keys : Array(String)? = nil) : Nil
+      task = {"id" => JSON::Any.new(id), "kind" => JSON::Any.new(kind), "attempt" => JSON::Any.new(attempt.to_i64),
+              "dossier" => JSON::Any.new(params["slug"]?.to_s), "params" => JSON.parse(params.to_json),
+              "requested_by" => JSON::Any.new("spec@example.com")}
+      task["secrets"] = JSON.parse({"data_keys" => data_keys}.to_json) if data_keys
+      queue << task
     end
 
     def config(mode = PartiduoAgent::Mode::DryRun) : PartiduoAgent::Config

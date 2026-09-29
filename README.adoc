@@ -44,7 +44,8 @@ partiduo-app), tâches idempotentes et reprenables, journal renvoyé.
 * *Dossiers* (inventaire) : sous-domaine, régime, modules, extensions,
   serveur, version, état, cabinet gestionnaire, donneur d'ordre obligatoire.
 * *Serveurs* (jeton d'exécutant en empreinte), *tâches*, *vagues* de
-  montée de version, *sauvegardes*, *versions*, *doubles validations*,
+  montée de version, *sauvegardes* (mode de chiffrement, empreinte de la
+  clé), *versions*, *doubles validations*,
   *alertes*, *certificats émis* (quota Let's Encrypt) et *journal d'audit*
   en ajout seul (déclencheur PostgreSQL).
 
@@ -62,6 +63,151 @@ base, certificat et échéance, quota Let's Encrypt, disque, dernière
 sauvegarde, exécutant silencieux) avec alertes à l'écran et par courriel ;
 recours d'accès par réémission de l'invitation d'administrateur avec double
 validation.
+
+== Sauvegardes et chiffrement
+
+Chaque sauvegarde d'un dossier est un `pg_dump -Fc` de sa base et une
+archive `tar.gz` de ses pièces jointes, avec leurs empreintes SHA-256
+(vérifiées avant toute restauration). Le *chiffrement* est un choix réglé
+dans l'administration (DECISIONS D-CHF-001 à D-CHF-012 de partiduo-app) :
+
+[cols="1,3",options="header"]
+|===
+|Mode |Effet
+
+|Aucun
+|Fichiers en clair (`.dump`, `.media.tar.gz`), comme avant.
+
+|Clé du serveur (défaut)
+|Chiffrés par une clé propre au serveur (`/var/lib/partiduo-agent/backup-server.key`,
+0600, créée au premier usage) : les copies hors site sont protégées, le
+serveur restaure seul.
+
+|Clé du cabinet
+|Chiffrés pour la clé publique RSA du cabinet : le serveur *ne peut pas*
+les lire. Restaurer (ou faire une restauration test complète) exige que
+l'admin du cabinet fournisse sa clé privée, utilisée dans son navigateur.
+|===
+
+* *Réglage* : par cabinet (écran « Chiffrement des sauvegardes » du cabinet,
+  menu de l'admin de cabinet, lien de la liste des cabinets pour le
+  super-admin), surchargeable par dossier (fiche du dossier). Un changement
+  vaut pour les sauvegardes suivantes ; chacune garde son mode, affiché dans
+  la liste avec l'empreinte de la clé. Déposer la clé du cabinet et quitter
+  le mode « clé du cabinet » sont réservés à l'admin du cabinet.
+* *Clé du cabinet* : paire RSA-OAEP de 3072 bits produite *dans le navigateur*
+  de l'admin du cabinet (la clé privée, chiffrée par sa phrase de passe, est
+  téléchargée et n'est jamais envoyée) ou par une commande locale :
++
+[source,sh]
+----
+openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:3072 -aes-256-cbc -out cabinet-prive.pem
+openssl pkey -in cabinet-prive.pem -pubout -out cabinet-public.pem   # à déposer
+openssl pkey -pubin -in cabinet-public.pem -outform DER | openssl dgst -sha256   # empreinte affichée
+----
++
+Seule la clé publique est déposée. Gardez la clé privée et sa phrase de
+passe hors ligne, en deux exemplaires : sans elles, les sauvegardes « clé du
+cabinet » sont illisibles. Une clé remplacée reste nécessaire aux
+sauvegardes qu'elle a chiffrées.
+* *Restauration* d'une sauvegarde « clé du cabinet » : la page « Clé du
+  cabinet requise » lit la clé privée (fichier PEM ou texte, chiffrée ou non)
+  dans le navigateur, vérifie son empreinte, déchiffre la clé de données de
+  *cette* sauvegarde et n'envoie qu'elle. L'administration la contrôle
+  (engagement), la remet une seule fois à l'exécutant, qui la garde en
+  mémoire ; elle n'est ni conservée, ni journalisée. Une restauration
+  interrompue est à redemander avec la clé.
+* *Restauration test* : complète pour « aucun » et « clé du serveur » ; pour
+  « clé du cabinet », l'exécutant vérifie l'empreinte et l'intégrité de
+  l'enveloppe (en-tête, clé attendue, engagement, découpage) et la liste
+  l'indique « enveloppe seule » : le contenu n'est vérifiable qu'avec la clé
+  du cabinet (« Tester avec la clé »).
+* *Clé du serveur* : `partiduo-agent server-key --state-dir /var/lib/partiduo-agent`
+  la crée au besoin et affiche son empreinte. Copiez le fichier dans un
+  coffre hors du serveur : sans lui, les sauvegardes « clé du serveur » sont
+  perdues avec le serveur.
+* *Clair jamais sur le disque* : `pg_dump`, `tar` et `pg_restore` écrivent et
+  lisent par un tube que l'exécutant chiffre ou déchiffre (`-` des gestes
+  `dump`, `restore`, `media-archive`, `media-restore` de l'enveloppe de sudo).
+  Une restauration authentifie d'abord tout le fichier : rien n'est remplacé
+  par une sauvegarde altérée ou avec une mauvaise clé.
+* *Journal d'audit* : `backup_encryption.firm`, `backup_encryption.dossier`,
+  `backup_key.deposit` (empreinte), `backup.restore` et `backup.test_restore`
+  (mode, clé fournie ou non).
+
+=== Format de l'enveloppe (format 1)
+
+Fichiers `….dump.enc` et `….media.tar.gz.enc`. Une *clé de données*
+aléatoire de 32 octets par sauvegarde, commune à ses deux fichiers ;
+entiers en gros-boutiste.
+
+[cols="1,1,4",options="header"]
+|===
+|Octets |Taille |Contenu
+
+|0 |7 |`PDUOBAK` (ASCII)
+|7 |1 |version du format : `1`
+|8 |1 |mode : `1` clé du serveur, `2` clé du cabinet
+|9 |4 |taille _C_ des segments en clair (65 536)
+|13 |32 |identifiant de la clé : SHA-256 du DER de la clé publique du cabinet
+(`openssl pkey -pubin -outform DER \| openssl dgst -sha256`), ou
+HMAC-SHA256(clé du serveur, `partiduo-backup/1 server-key-id`)
+|45 |32 |sel du fichier (aléatoire)
+|77 |32 |engagement : HMAC-SHA256(clé de données, `partiduo-backup/1 commitment`)
+|109 |2 |longueur _W_ de la clé enveloppée
+|111 |_W_ |clé de données enveloppée : RSA-OAEP (SHA-256, MGF1-SHA-256, sans
+étiquette) pour le cabinet ; nonce (12) ‖ AES-256-GCM(clé du serveur,
+données associées `partiduo-backup/1 wrap`) ‖ étiquette (16) pour le serveur
+|111 + _W_ |… |segments
+|===
+
+* Clé du fichier : HKDF-SHA256 (RFC 5869) de la clé de données, sel de
+  l'en-tête, information `partiduo-backup/1 data`, 32 octets.
+* Segments : le clair découpé en morceaux de _C_ octets, chacun chiffré par
+  AES-256-GCM (étiquette de 16 octets ajoutée), données associées = l'en-tête
+  entier (octets 0 à 110 + _W_), nonce = numéro du segment sur 11 octets
+  (0, 1, 2…) suivi d'un octet `1` pour le dernier segment, `0` sinon. Le
+  dernier segment est toujours plus court que _C_ (vide si le clair est un
+  multiple de _C_) : une troncature, un ajout, un segment déplacé ou un
+  octet changé fait échouer la lecture.
+
+=== Restauration hors de Partiduo
+
+Sur un poste qui a la clé privée du cabinet (ou, pour la clé du serveur, le
+fichier `backup-server.key`) :
+
+[source,sh]
+----
+# 1. Avec l'exécutant (binaire libre, sans administration ni réseau)
+partiduo-agent inspect backup-….dump.enc                       # mode, empreinte de la clé
+partiduo-agent decrypt --private-key cabinet-prive.pem backup-….dump.enc backup.dump
+partiduo-agent decrypt --private-key cabinet-prive.pem backup-….media.tar.gz.enc media.tar.gz
+#    (phrase de passe : --passphrase-file F ou PARTIDUO_KEY_PASSPHRASE ;
+#     clé du serveur : --server-key backup-server.key)
+
+# 2. Sans Partiduo : openssl pour la clé de données, script Python indépendant
+#    (paquet cryptography) pour le contenu
+scripts/dechiffrer-sauvegarde.py --wrapped-key-out cle.bin backup-….dump.enc
+openssl pkeyutl -decrypt -inkey cabinet-prive.pem -pkeyopt rsa_padding_mode:oaep \
+  -pkeyopt rsa_oaep_md:sha256 -pkeyopt rsa_mgf1_md:sha256 -in cle.bin -out dek.bin
+scripts/dechiffrer-sauvegarde.py --data-key-file dek.bin backup-….dump.enc backup.dump
+#    (ou directement : scripts/dechiffrer-sauvegarde.py --private-key cabinet-prive.pem …)
+
+# 3. Puis, comme pour une sauvegarde en clair
+createdb --encoding=UTF8 dossier_restaure && pg_restore --no-owner -d dossier_restaure backup.dump
+tar -xzf media.tar.gz -C <stockage des pièces jointes>
+----
+
+`openssl enc` refuse les chiffrements authentifiés (AES-GCM) : la ligne de
+commande `openssl` seule déchiffre la clé de données (étape 2) mais pas le
+contenu. La clé de fichier se calcule aussi en ligne de commande :
+
+[source,sh]
+----
+openssl kdf -keylen 32 -kdfopt digest:SHA256 -kdfopt hexkey:$(xxd -p -c 64 dek.bin) \
+  -kdfopt hexsalt:$(dd if=backup-….dump.enc bs=1 skip=45 count=32 2>/dev/null | xxd -p -c 64) \
+  -kdfopt "info:partiduo-backup/1 data" HKDF
+----
 
 == Modes de l'exécutant
 
@@ -101,7 +247,9 @@ hors du répertoire du dossier (`<backup-dir>/<sous-domaine>/`, D-CRA-001),
 une valeur prise pour une option de `manage instance` (D-CRA-002), une
 pièce jointe hors du stockage de l'instance (D-CRA-004) ; les lignes de
 PostgreSQL qui citent des valeurs de la base ne remontent pas dans le
-journal des tâches (D-CRA-005).
+journal des tâches (D-CRA-005). Une sauvegarde chiffrée par la clé du
+cabinet ne peut pas être lue sur le serveur (voir « Sauvegardes et
+chiffrement »).
 
 == Développement
 
@@ -149,6 +297,7 @@ install -o root -g root -m 440 deploy/partiduo-agent.sudoers /etc/sudoers.d/part
 install -d -o partiduo -g partiduo-agent -m 2770 /var/backups/partiduo
 install -d -o partiduo -g partiduo -m 750 /var/lib/partiduo /var/lib/partiduo/stage
 install -d -o partiduo-agent -g partiduo-agent -m 700 /var/lib/partiduo-agent
+sudo -u partiduo-agent partiduo-agent server-key --state-dir /var/lib/partiduo-agent   # clé du serveur : à copier hors du serveur
 sudo -u postgres createuser --createdb --no-superuser partiduo
 ----
 Variables : `DATABASE_URL`, `MARTEN_SECRET_KEY`, `PARTIDUO_DOMAIN`

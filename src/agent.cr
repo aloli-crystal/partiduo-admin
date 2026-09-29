@@ -7,6 +7,9 @@
 require "log"
 require "./agent/lib"
 
+# Commandes locales (sauvegardes chiffrées) : sans administration ni jeton.
+exit PartiduoAgent::Tools.run(ARGV) if PartiduoAgent::Tools.command?(ARGV)
+
 begin
   config = PartiduoAgent::Config.parse(ARGV)
   if config.production? && config.mail_command.strip.empty?
