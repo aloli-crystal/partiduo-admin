@@ -19,11 +19,10 @@ module PartiduoAdmin
     # (administration antérieure à 1.2.0) : `dual`.
     APPROVAL_MODES = %w[single dual]
 
-    # Second nom passé à `manage instance admin-invite --approvers` quand
-    # une seule personne a décidé : le contrat 1.0.0 de l'instance exige
-    # deux noms ; celui-ci dit, dans le journal du dossier, qu'il n'y a pas
-    # eu de seconde personne (D-VAL2-005, B-VAL2-001).
-    SINGLE_APPROVER_MARK = "validation-une-personne"
+    # Mineure du contrat `manage instance` qui accepte `admin-invite
+    # --approval-mode single|dual` et un seul nom en mode `single`
+    # (contrat 1.1.0, B-VAL2-001 levé).
+    APPROVAL_MODE_MINOR = 1
 
     # Version majeure du contrat `manage instance` de partiduo-app que
     # l'exécutant sait parler (doc/api/instance-cli.adoc de partiduo-app).

@@ -15,10 +15,12 @@ private def params(slug = "garde", **extra) : Hash(String, JSON::Any)
 end
 
 private def run_dry(admin : AdminSpec::FakeAdmin, id : Int64, kind : String, task_params : Hash,
-                    archive : String? = nil, config = admin.config) : {JSON::Any, PartiduoAgent::DrySystem}
+                    archive : String? = nil, config = admin.config,
+                    contract = "1.1.0") : {JSON::Any, PartiduoAgent::DrySystem}
   admin.push(id, kind, task_params)
   runner = PartiduoAgent::Runner.new(config)
   dry = runner.build_system(->(_line : String) { nil }).as(PartiduoAgent::DrySystem)
+  dry.contract = contract
   dry.databases << "partiduo_adm_garde"
   dry.provisioned << "partiduo_adm_garde"
   dry.files[archive] = 1_i64 if archive
@@ -36,15 +38,37 @@ private def with_admin(&)
 end
 
 describe "partiduo-agent : mode de validation des opérations sensibles (D-VAL2-005)" do
-  it "recours d'accès à une personne : un seul nom, et la marque « une personne » pour l'instance" do
+  it "recours d'accès à une personne : --approval-mode single et un seul nom (contrat 1.1.0, B-VAL2-001)" do
     with_admin do |admin|
       report, dry = run_dry(admin, 900_i64, "instance.admin_invite",
         params(email: "gerant@demo.fr", reason: "gérant parti", approval_ref: "DV-1", approval_mode: "single",
           approvers: ["seule@cabinet.fr"]))
       report["ok"].as_bool.should be_true
       call = dry.calls.find!(&.starts_with?("instance admin-invite"))
-      call.should contain("--approvers seule@cabinet.fr,#{PartiduoAdmin::Protocol::SINGLE_APPROVER_MARK}")
+      call.should contain("--approval-mode single --approvers seule@cabinet.fr")
+      call.should_not contain("seule@cabinet.fr,")
+      call.should_not contain("validation-une-personne")
       admin.logs[900_i64].join('\n').should contain("validation à une personne DV-1 par seule@cabinet.fr")
+    end
+  end
+
+  it "instance au contrat 1.0.0 : refuse proprement la validation à une personne, replie la validation à deux" do
+    with_admin do |admin|
+      report, dry = run_dry(admin, 902_i64, "instance.admin_invite",
+        params(email: "gerant@demo.fr", reason: "gérant parti", approval_ref: "DV-5", approval_mode: "single",
+          approvers: ["seule@cabinet.fr"]), contract: "1.0.0")
+      report["ok"].as_bool.should be_false
+      report.to_json.should contain("exige le contrat 1.1.0")
+      dry.calls.none?(&.starts_with?("instance admin-invite")).should be_true
+
+      report, dry = run_dry(admin, 903_i64, "instance.admin_invite",
+        params(email: "gerant@demo.fr", reason: "gérant parti", approval_ref: "DV-6", approval_mode: "dual",
+          approvers: ["a@x.fr", "b@x.fr"]), contract: "1.0.0")
+      report["ok"].as_bool.should be_true
+      call = dry.calls.find!(&.starts_with?("instance admin-invite"))
+      call.should contain("--approvers a@x.fr,b@x.fr")
+      call.should_not contain("--approval-mode")
+      admin.logs[903_i64].join('\n').should contain("contrat d'instance 1.0.0 : validation à deux personnes transmise sans --approval-mode")
     end
   end
 
@@ -54,7 +78,7 @@ describe "partiduo-agent : mode de validation des opérations sensibles (D-VAL2-
         params(email: "gerant@demo.fr", reason: "gérant parti", approval_ref: "DV-2", approval_mode: "dual",
           approvers: ["a@x.fr", "b@x.fr"]))
       report["ok"].as_bool.should be_true
-      dry.calls.find!(&.starts_with?("instance admin-invite")).should contain("--approvers a@x.fr,b@x.fr")
+      dry.calls.find!(&.starts_with?("instance admin-invite")).should contain("--approval-mode dual --approvers a@x.fr,b@x.fr")
       admin.logs[901_i64].join('\n').should contain("validation à deux personnes DV-2")
     end
   end

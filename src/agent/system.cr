@@ -240,6 +240,10 @@ module PartiduoAgent
     getter releases = {} of String => String
     getter read_only = Set(String).new
     getter calls = [] of String
+    # Version du contrat que simule l'instance (`version`, `status`, toute
+    # réponse) : la version courante de partiduo-app, ou une plus ancienne
+    # pour éprouver un repli.
+    property contract = "1.1.0"
 
     private def op(name : String, detail : String) : Nil
       calls << "#{name} #{detail}"
@@ -290,15 +294,15 @@ module PartiduoAgent
         return InstanceReply.new(6, JSON.parse(%({"ok":false,"error":{"code":"database_unavailable","reason":"database.unavailable","message":"base injoignable"}})))
       end
       data = dry_data(slug, action, args, db, version || releases[slug]? || "0.1.0")
-      InstanceReply.new(0, JSON.parse({"contract" => "1.0.0", "action" => action, "ok" => true, "data" => data}.to_json))
+      InstanceReply.new(0, JSON.parse({"contract" => contract, "action" => action, "ok" => true, "data" => data}.to_json))
     end
 
     # Réponse simulée de l'interface d'instance, pour une base qui répond.
     private def dry_data(slug : String, action : String, args : Array(String), db : String, version : String)
       case action
-      when "version" then {"version" => version, "contract" => "1.0.0"}
+      when "version" then {"version" => version, "contract" => contract}
       when "status"
-        {"version" => version, "contract" => "1.0.0", "provisioned" => provisioned.includes?(db),
+        {"version" => version, "contract" => contract, "provisioned" => provisioned.includes?(db),
          "read_only" => {"active" => read_only.includes?(db)}, "migrations" => {"applied" => 10, "pending" => 0},
          "modules" => DRY_CATALOG.map { |code, depends| {"code" => code, "depends_on" => depends} }}
       when "read-only"
@@ -308,7 +312,8 @@ module PartiduoAgent
         {"media_root" => "/dry-run/media/#{slug}", "file_count" => 0, "total_bytes" => 0, "missing" => [] of String}
       when "admin-invite"
         {"email" => args.first? || "", "user_created" => false, "url" => "https://dry-run/invitation/DRYRUN",
-         "expires_at" => "2026-10-05T00:00:00Z", "usable_admins" => 0}
+         "expires_at" => "2026-10-05T00:00:00Z", "usable_admins" => 0,
+         "approval_mode" => args.index("--approval-mode").try { |index| args[index + 1]? } || "dual"}
       when "migrate" then {"applied" => [] of String, "pending" => 0}
       else                {"code" => args.first? || "", "active" => action == "enable", "data" => "kept"}
       end

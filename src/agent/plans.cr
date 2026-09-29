@@ -175,14 +175,25 @@ module PartiduoAgent
     end
 
     # Contrat de l'interface d'instance : majeure attendue (instance-cli.adoc).
-    def self.check_contract(ctx : Context, version : String? = nil) : Nil
+    # Renvoie la version lue (`1.1.0`), pour les gestes qui dépendent d'une
+    # mineure.
+    def self.check_contract(ctx : Context, version : String? = nil) : String
+      contract = ""
       ctx.step("contrat") do
         data = ctx.instance!("version", version: version)
-        major = data["contract"]?.try(&.as_s?).try(&.split('.').first.to_i?)
+        contract = data["contract"]?.try(&.as_s?) || ""
+        major = contract.split('.').first.to_i?
         unless major == PartiduoAdmin::Protocol::INSTANCE_CLI_MAJOR
           raise StepError.new("contrat d'instance #{data["contract"]?} non pris en charge", "usage")
         end
       end
+      contract
+    end
+
+    # Le contrat `contract` (`1.1.0`) est-il au moins `major.minor` ?
+    def self.contract_at_least?(contract : String, major : Int32, minor : Int32) : Bool
+      parts = contract.split('.').map(&.to_i?)
+      {parts[0]? || 0, parts[1]? || 0} >= {major, minor}
     end
 
     # --- Création -------------------------------------------------------------
@@ -463,15 +474,26 @@ module PartiduoAgent
     # --- Recours d'accès (décision prise dans l'admin) -----------------------
 
     def self.admin_invite(ctx : Context) : Nil
-      check_contract(ctx)
+      contract = check_contract(ctx)
       approvers = checked_approvers(ctx)
+      mode = approval_mode(ctx)
       ctx.log("recours d'accès — #{approval_line(ctx)}")
-      # Une personne : le contrat 1.0.0 de l'instance exige deux noms ; le
-      # second dit qu'il n'y en a pas eu (D-VAL2-005, B-VAL2-001).
-      approvers += [PartiduoAdmin::Protocol::SINGLE_APPROVER_MARK] if approval_mode(ctx) == "single"
-      data = ctx.instance!("admin-invite", [ctx.value_arg("email"), "--reason", ctx.value_arg("reason"),
-                                            "--approval-ref", ctx.value_arg("approval_ref"),
-                                            "--approvers", approvers.join(',')])
+      arguments = [ctx.value_arg("email"), "--reason", ctx.value_arg("reason"),
+                   "--approval-ref", ctx.value_arg("approval_ref")]
+      # Contrat 1.1.0 (B-VAL2-001) : le mode est transmis, un seul nom en
+      # mode `single`. Instance en 1.0.0 : elle exige deux noms ; la
+      # validation à deux passe sans l'option (repli consigné), celle à une
+      # personne est refusée avant tout geste — l'instance est à mettre à
+      # jour.
+      if contract_at_least?(contract, 1, PartiduoAdmin::Protocol::APPROVAL_MODE_MINOR)
+        arguments += ["--approval-mode", mode]
+      elsif mode == "single"
+        raise StepError.new("contrat d'instance #{contract} : la validation à une personne exige le contrat " \
+                            "1.#{PartiduoAdmin::Protocol::APPROVAL_MODE_MINOR}.0 (mettre l'instance à jour)", "refused")
+      else
+        ctx.log("contrat d'instance #{contract} : validation à deux personnes transmise sans --approval-mode")
+      end
+      data = ctx.instance!("admin-invite", arguments + ["--approvers", approvers.join(',')])
       %w[email user_created expires_at usable_admins].each { |key| ctx.result[key] = data[key] if data[key]? }
       url = data["url"]?.try(&.as_s?)
       if url && ctx.system.mailer?

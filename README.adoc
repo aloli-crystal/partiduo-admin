@@ -119,8 +119,11 @@ comme avant. Le demandeur ne peut pas confirmer seul.
   `dual`) et `approvers` ; l'exécutant exige un nom en mode une personne et
   deux noms distincts en mode deux personnes (absent : deux), l'écrit au
   journal de la tâche, et pour un recours d'accès passe à l'instance
-  `--approvers <nom>,validation-une-personne` (le contrat 1.0.0 exige deux
-  noms ; B-VAL2-001).
+  `--approval-mode single|dual` avec le ou les noms (contrat d'instance
+  1.1.0, B-VAL2-001 levé). Instance encore au contrat 1.0.0 : la validation
+  à deux lui est transmise sans l'option (repli consigné au journal de la
+  tâche), celle à une personne est refusée avant tout geste — mettre
+  l'instance à jour.
 
 == Sauvegardes et chiffrement
 
