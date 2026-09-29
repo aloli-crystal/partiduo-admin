@@ -42,7 +42,18 @@ module PartiduoAdmin
       if input.role != Config::SUPER_ADMIN && (firm_id.nil? || !Firm.filter(id: firm_id).exists?)
         add(errors, "firm_id", "admin.errors.required")
       end
+      independent_errors(input, firm_id, errors) unless input.role == Config::SUPER_ADMIN
       errors
+    end
+
+    # Gestionnaire indépendant : une seule personne, qui gère tous ses
+    # dossiers (rôle d'admin de sa structure). Une équipe, c'est un cabinet
+    # (D-VAL2-002).
+    private def self.independent_errors(input : UserInput, firm_id : Int64?, errors : Errors) : Nil
+      firm = firm_id.try { |id| Firm.filter(id: id).first }
+      return unless firm && firm.independent?
+      add(errors, "role", "admin.errors.firm.independent_role") unless input.role == Config::FIRM_ADMIN
+      add(errors, "firm_id", "admin.errors.firm.independent_single") if User.filter(firm_id: firm.pk, active: true).exists?
     end
 
     # Recours pour un utilisateur de l'administration qui a perdu ses
@@ -70,6 +81,9 @@ module PartiduoAdmin
       user.save!
       Auth::Sessions.revoke_all(user) unless active
       Audit.log(actor, active ? "user.enable" : "user.disable", target: user)
+      # Équipe réduite : la validation à deux se désactive d'elle-même s'il
+      # ne reste qu'une personne habilitée (D-VAL2-003).
+      ApprovalMode.after_team_change(user) unless active
       true
     end
 
@@ -99,13 +113,19 @@ module PartiduoAdmin
 
     # --- Cabinets ------------------------------------------------------------
 
-    def self.create_firm(actor : User, name : String, siren : String = "", email : String = "") : Outcome(Firm)
+    # Structure : cabinet, gestionnaire indépendant ou parc sans cabinet
+    # (un seul). Validation à deux désactivée à la création : l'équipe est
+    # vide (D-VAL2-001).
+    def self.create_firm(actor : User, name : String, siren : String = "", email : String = "",
+                         kind : String = "cabinet") : Outcome(Firm)
       return Outcome(Firm).failure("base", "admin.errors.forbidden") unless Access.fleet?(actor)
       return Outcome(Firm).failure("name", "admin.errors.required") if name.strip.empty?
       return Outcome(Firm).failure("name", "admin.errors.firm.taken") if Firm.filter(name: name.strip).exists?
       return Outcome(Firm).failure("siren", "admin.errors.siren") unless siren.empty? || Siren.valid?(siren)
-      firm = Firm.create!(name: name.strip, siren: siren, email: email.strip)
-      Audit.log(actor, "firm.create", target: firm)
+      return Outcome(Firm).failure("kind", "admin.errors.invalid") unless Firm::KINDS.includes?(kind)
+      return Outcome(Firm).failure("kind", "admin.errors.firm.fleet_taken") if kind == "fleet" && Firm.filter(kind: "fleet").exists?
+      firm = Firm.create!(name: name.strip, siren: siren, email: email.strip, kind: kind, dual_approval: false)
+      Audit.log(actor, "firm.create", target: firm, detail: {"kind" => kind})
       Outcome(Firm).new(firm)
     end
 

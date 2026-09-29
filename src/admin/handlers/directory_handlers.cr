@@ -1,21 +1,41 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 
 module PartiduoAdmin
+  # Structures (ADR-008 D2, D-VAL2-002) : cabinets, gestionnaires
+  # indépendants, parc sans cabinet ; mode des opérations sensibles de
+  # chacune.
   class FirmsHandler < ScreenHandler
     def get
       require_fleet!
-      page("admin/firms.html", {"firms" => Firm.all.order("name").to_a})
+      page("admin/firms.html", {"firms" => firms, "kinds" => kinds("cabinet"), "fleet_exists" => fleet_exists?})
     end
 
     def post
       require_fleet!
-      outcome = Directory.create_firm(user, field("name"), field("siren").gsub(/\s/, ""), field("email"))
+      kind = field("kind").presence || "cabinet"
+      outcome = Directory.create_firm(user, field("name"), field("siren").gsub(/\s/, ""), field("email"), kind)
       if outcome.ok?
         flash["success"] = I18n.t("admin.saved")
         return redirect("/firms")
       end
-      page("admin/firms.html", {"firms" => Firm.all.order("name").to_a, "errors" => translate(outcome.errors),
-                                "name" => field("name"), "siren" => field("siren"), "email" => field("email")}, status: 422)
+      page("admin/firms.html", {"firms" => firms, "errors" => translate(outcome.errors), "kinds" => kinds(kind),
+                                "fleet_exists" => fleet_exists?, "name" => field("name"), "siren" => field("siren"),
+                                "email" => field("email")}, status: 422)
+    end
+
+    private def firms
+      Firm.all.order("name").to_a.map do |firm|
+        {"firm" => firm, "mode_key" => "admin.dual_approval.modes.#{ApprovalMode.mode(firm)}",
+         "team" => ApprovalMode.team_size(firm)}
+      end
+    end
+
+    private def kinds(selected : String)
+      Firm::KINDS.map { |code| {"value" => code, "key" => "admin.firms.kinds.#{code}", "selected" => code == selected} }
+    end
+
+    private def fleet_exists? : Bool
+      Firm.filter(kind: "fleet").exists?
     end
   end
 

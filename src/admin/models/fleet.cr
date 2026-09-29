@@ -242,6 +242,21 @@ module PartiduoAdmin
     def error_text : String?
       error.presence
     end
+
+    # Opération sensible : mode de validation transmis à l'exécutant
+    # (`single` ou `dual`, D-VAL2-005), `nil` pour les autres tâches.
+    def approval_mode_key : String?
+      mode = params_json["approval_mode"]?.try(&.as_s?)
+      mode && Approval::MODES.includes?(mode) ? "admin.dual_approval.modes.#{mode}" : nil
+    end
+
+    # Référence et personnes de la validation, `nil` hors opération sensible.
+    def approval_summary : String?
+      reference = params_json["approval_ref"]?.try(&.as_s?)
+      return if reference.nil?
+      approvers = params_json["approvers"]?.try(&.as_a?).try(&.map(&.to_s)) || [] of String
+      "#{reference} · #{approvers.join(", ")}"
+    end
   end
 
   # Sauvegarde d'un dossier (ADR-008 D5) : `pg_dump -Fc` et archive des
@@ -306,10 +321,14 @@ module PartiduoAdmin
     end
   end
 
-  # Double validation (ADR-008 D3, D5) : suppression définitive, recours
-  # d'accès. Deux personnes distinctes, dont le validateur est admin du
-  # cabinet du dossier ou super-admin.
+  # Demande d'opération sensible (ADR-008 D3, D5) : suppression définitive,
+  # recours d'accès. Selon le réglage de la structure (D-VAL2-001), une
+  # autre personne habilitée la valide (`dual`), ou le demandeur la confirme
+  # seul après ré-authentification forte (`single`). `mode` : celui en
+  # vigueur à la demande, puis celui de la décision.
   class Approval < Marten::Model
+    MODES = %w[single dual]
+
     KINDS  = %w[delete admin_invite]
     STATES = %w[pending approved rejected expired]
 
@@ -326,9 +345,14 @@ module PartiduoAdmin
     field :created_at, :date_time, auto_now_add: true
     field :expires_at, :date_time
     field :decided_at, :date_time, null: true, blank: true
+    field :mode, :string, max_size: 8, default: "dual"
 
     def kind_key : String
       "admin.approvals.kinds.#{kind}"
+    end
+
+    def mode_key : String
+      "admin.dual_approval.modes.#{mode}"
     end
 
     def state_key : String

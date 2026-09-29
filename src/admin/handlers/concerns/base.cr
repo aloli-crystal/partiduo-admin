@@ -182,6 +182,9 @@ module PartiduoAdmin
         context["nav_admin"] = !current.file_manager?
         # Admin de cabinet : chiffrement des sauvegardes de son cabinet.
         context["nav_firm_id"] = current.firm_admin? ? current.firm_id : nil
+        # Validation à deux : réglage de la structure de l'admin ; pour le
+        # super-admin, celui du parc sans cabinet (D-VAL2-001).
+        context["nav_approval_firm_id"] = current.firm_admin? ? current.firm_id : (current.super_admin? ? Firm.filter(kind: "fleet").first.try(&.pk) : nil)
         context["open_alerts"] = Alerts.visible(current).count
         context["pending_approvals"] = Approvals.visible(current).filter(state: "pending").count
       end

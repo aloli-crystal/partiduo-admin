@@ -3,10 +3,18 @@
 require "json"
 
 module PartiduoAdmin
-  # Double validation (ADR-008 D3, D5) : une personne demande, une *autre*
-  # personne habilitée (admin du cabinet du dossier ou super-admin) valide ;
-  # alors seulement la tâche est enregistrée, avec la référence et les deux
-  # noms, reportés dans le journal de l'instance.
+  # Opérations sensibles (ADR-008 D3, D5) : suppression définitive et
+  # recours d'accès. Une personne demande ; selon le réglage de la structure
+  # du dossier (`ApprovalMode`, D-VAL2-001) :
+  #
+  # * deux personnes : une *autre* personne habilitée (admin du cabinet du
+  #   dossier ou super-admin) valide ;
+  # * une personne : le demandeur, s'il est lui-même habilité à valider,
+  #   confirme seul après une authentification forte récente et une
+  #   confirmation explicite (D-VAL2-004).
+  #
+  # Alors seulement la tâche est enregistrée, avec la référence, le mode et
+  # les noms, reportés dans le journal de l'instance.
   module Approvals
     alias Outcome = Fleet::Outcome
 
@@ -38,28 +46,97 @@ module PartiduoAdmin
       if Approval.filter(dossier_id: dossier.pk, kind: kind, state: "pending", expires_at__gt: now).exists?
         return Outcome(Approval).failure("base", "admin.errors.approval.already_pending")
       end
+      mode = ApprovalMode.mode_for(dossier, now)
       approval = Approval.create!(kind: kind, reference: Secrets.reference("DV"), dossier: dossier,
-        params: params.to_json, reason: reason.strip, requested_by: user, expires_at: now + Config::APPROVAL_TTL)
-      Audit.log(user, "approval.request", target: approval, detail: {"kind" => kind, "dossier" => dossier.slug.to_s})
+        params: params.to_json, reason: reason.strip, requested_by: user, expires_at: now + Config::APPROVAL_TTL, mode: mode)
+      Audit.log(user, "approval.request", target: approval, detail: {"kind" => kind, "dossier" => dossier.slug.to_s, "mode" => mode})
       Outcome(Approval).new(approval)
     end
 
+    # Le demandeur peut-il confirmer seul ? Structure réglée sur « une
+    # personne » et demandeur habilité à valider (admin du cabinet du
+    # dossier ou super-admin) : un gestionnaire de dossiers qui demande un
+    # recours d'accès attend toujours un admin.
+    def self.can_confirm_alone?(user : User, approval : Approval, now : Time = Config.now) : Bool
+      return false unless approval.state == "pending" && approval.requested_by_id == user.pk
+      dossier = approval.dossier
+      return false if dossier.nil? || !Access.can?(user, :approve, dossier)
+      ApprovalMode.mode_for(dossier, now) == ApprovalMode::SINGLE
+    end
+
+    # Validation par une *autre* personne habilitée : toujours possible,
+    # quel que soit le réglage (deux personnes valent mieux qu'une).
     def self.approve(user : User, approval : Approval, now : Time = Config.now) : Outcome(Task)
+      if failure = open_failure(approval, now)
+        return failure
+      end
+      if approval.requested_by_id == user.pk
+        return Outcome(Task).failure("base", "admin.errors.approval.same_person")
+      end
+      return Outcome(Task).failure("base", "admin.errors.forbidden") unless Access.can_approve?(user, approval)
+      requester = approval.requested_by!
+      outcome = issue(user, approval, [requester.email.to_s, user.email.to_s], ApprovalMode::DUAL, now)
+      if outcome.ok?
+        Audit.log(user, "approval.approve", target: approval,
+          detail: {"kind" => approval.kind.to_s, "requested_by" => requester.email.to_s,
+                   "dossier" => approval.dossier!.slug.to_s, "mode" => ApprovalMode::DUAL})
+      end
+      outcome
+    end
+
+    # Confirmation par le demandeur seul (structure réglée sur « une
+    # personne », D-VAL2-004) : authentification forte récente
+    # (`strong_recent`, établie par le handler) et confirmation explicite —
+    # le sous-domaine du dossier retapé pour une suppression définitive, une
+    # case cochée pour un recours d'accès. Les contrôles de l'état du dossier
+    # et de la durée légale sont ceux de la validation à deux.
+    def self.confirm_alone(user : User, approval : Approval, strong_recent : Bool, confirmation : String,
+                           now : Time = Config.now) : Outcome(Task)
+      if failure = open_failure(approval, now)
+        return failure
+      end
+      return Outcome(Task).failure("base", "admin.errors.forbidden") unless approval.requested_by_id == user.pk
+      dossier = approval.dossier!
+      return Outcome(Task).failure("base", "admin.errors.approval.needs_admin") unless Access.can?(user, :approve, dossier)
+      if ApprovalMode.mode_for(dossier, now) != ApprovalMode::SINGLE
+        return Outcome(Task).failure("base", "admin.errors.approval.dual_required")
+      end
+      return Outcome(Task).failure("reauth", "admin.errors.approval.reauth") unless strong_recent
+      expected = approval.kind == "delete" ? dossier.slug.to_s : "yes"
+      unless confirmation.strip == expected
+        key = approval.kind == "delete" ? "admin.errors.approval.confirmation_slug" : "admin.errors.approval.confirmation"
+        return Outcome(Task).failure("confirmation", key)
+      end
+      outcome = issue(user, approval, [user.email.to_s], ApprovalMode::SINGLE, now)
+      if outcome.ok?
+        Audit.log(user, "approval.confirm_alone", target: approval,
+          detail: {"kind" => approval.kind.to_s, "dossier" => dossier.slug.to_s, "mode" => ApprovalMode::SINGLE})
+      end
+      outcome
+    end
+
+    # Demande encore ouverte ? Sinon l'échec à rendre (une demande échue
+    # passe à « expirée »).
+    private def self.open_failure(approval : Approval, now : Time) : Outcome(Task)?
       return Outcome(Task).failure("base", "admin.errors.approval.state") unless approval.state == "pending"
       if approval.expires_at! <= now
         approval.state = "expired"
         approval.save!
         return Outcome(Task).failure("base", "admin.errors.approval.expired")
       end
-      if approval.requested_by_id == user.pk
-        return Outcome(Task).failure("base", "admin.errors.approval.same_person")
-      end
-      return Outcome(Task).failure("base", "admin.errors.forbidden") unless Access.can_approve?(user, approval)
+      nil
+    end
+
+    # Enregistre la tâche de la demande : état du dossier recontrôlé,
+    # référence, mode (`approval_mode`, `single` ou `dual`) et personnes
+    # (`approvers`) dans les paramètres de la tâche.
+    private def self.issue(user : User, approval : Approval, approvers : Array(String), mode : String,
+                           now : Time) : Outcome(Task)
       dossier = approval.dossier!
-      requester = approval.requested_by!
       params = Tasks.dossier_params(dossier)
       params["approval_ref"] = Tasks.any(approval.reference)
-      params["approvers"] = Tasks.any([requester.email.to_s, user.email.to_s])
+      params["approval_mode"] = Tasks.any(mode)
+      params["approvers"] = Tasks.any(approvers)
       params["reason"] = Tasks.any(approval.reason)
       kind = case approval.kind
              when "delete"
@@ -77,14 +154,15 @@ module PartiduoAdmin
                "instance.admin_invite"
              end
       # La demande passe à « validée » par une mise à jour conditionnelle,
-      # dans la transaction qui enregistre la tâche : de deux validations
+      # dans la transaction qui enregistre la tâche : de deux décisions
       # simultanées, une seule crée la tâche (D-AFN-010).
       task : Task? = nil
       Marten::DB::Connection.default.transaction do
-        claimed = Approval.filter(id: approval.pk, state: "pending").update(state: "approved", decided_at: now)
+        claimed = Approval.filter(id: approval.pk, state: "pending").update(state: "approved", decided_at: now, mode: mode)
         if claimed == 1
           created = Tasks.enqueue(kind, dossier.server!, params, user, dossier)
           approval.state = "approved"
+          approval.mode = mode
           approval.decided_by = user
           approval.decided_at = now
           approval.task = created
@@ -92,14 +170,12 @@ module PartiduoAdmin
           task = created
         end
       end
-      approved = task
-      if approved.nil?
+      issued = task
+      if issued.nil?
         approval.reload
         return Outcome(Task).failure("base", "admin.errors.approval.state")
       end
-      Audit.log(user, "approval.approve", target: approval,
-        detail: {"kind" => approval.kind.to_s, "requested_by" => requester.email.to_s, "dossier" => dossier.slug.to_s})
-      Outcome(Task).new(approved)
+      Outcome(Task).new(issued)
     end
 
     def self.reject(user : User, approval : Approval, now : Time = Config.now) : Bool

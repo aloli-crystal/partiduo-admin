@@ -86,6 +86,16 @@ fieldset.pd-fieldset legend { font-weight: 600; margin-block-end: .35rem; }
 .pd-row-actions { display: flex; flex-wrap: wrap; gap: .35rem; }
 .pd-row-actions form { display: inline; }
 
+/* Validation à deux au choix (D-VAL2-001) : pastille du mode, listes des protections. */
+.pd-mode { display: inline-block; padding: 0 .5rem; border-radius: 999px; font-size: .8rem; font-weight: 600;
+  background: var(--pd-row-alt); color: var(--pd-ink); border: 1px solid var(--pd-rule); }
+.pd-mode-dual { background: var(--pd-ok-bg); color: var(--pd-ok); border-color: transparent; }
+.pd-mode-single { background: var(--pd-warn-bg); color: var(--pd-warn); border-color: transparent; }
+.pd-subtitle { font-size: .95rem; font-weight: 600; margin-block-end: .35rem; }
+.pd-list { list-style: disc; padding-inline-start: 1.25rem; }
+.pd-list li + li { margin-block-start: .2rem; }
+.pd-ok-text { color: var(--pd-ok); font-weight: 600; }
+
 .pd-auth-body { display: flex; flex-direction: column; min-height: 100vh; }
 .pd-auth { flex: 1; display: flex; justify-content: center; align-items: flex-start; padding: 2.5rem 1rem 3rem; }
 .pd-auth:focus { outline: none; }

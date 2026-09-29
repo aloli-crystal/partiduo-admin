@@ -188,6 +188,8 @@ module PartiduoAdmin
       end
       Supervision.evaluate(now)
       Approval.filter(state: "pending", expires_at__lte: now).update(state: "expired")
+      # Validation à deux d'une équipe retombée à une personne (D-VAL2-003).
+      ApprovalMode.reconcile_all(now)
       Summary.new(backups, prunes, tests, checks)
     end
   end

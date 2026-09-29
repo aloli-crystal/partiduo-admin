@@ -1,11 +1,20 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 
 module PartiduoAdmin
-  # Cabinet comptable (ADR-008 D2) : administre des dossiers et leurs
-  # gestionnaires. Le parc d'Aloli est lui-même un cabinet.
+  # Structure qui administre des dossiers (ADR-008 D2) : un *cabinet*
+  # comptable et ses collaborateurs, un *gestionnaire indépendant* (une
+  # personne qui gère tous ses dossiers, sans cabinet) ou le *parc sans
+  # cabinet*, périmètre propre du super-admin (D-VAL2-002).
   class Firm < Marten::Model
+    KINDS = %w[cabinet independent fleet]
+
     field :id, :big_int, primary_key: true, auto: true
     field :name, :string, max_size: 150, unique: true
+    field :kind, :string, max_size: 16, default: "cabinet"
+    # Validation à deux des opérations sensibles (D-VAL2-001) : réglage de
+    # la structure, jamais vrai avec moins de deux personnes habilitées.
+    field :dual_approval, :bool, default: false
+    field :dual_approval_changed_at, :date_time, null: true, blank: true
     field :siren, :string, max_size: 9, blank: true, default: ""
     field :email, :string, max_size: 254, blank: true, default: ""
     field :active, :bool, default: true
@@ -26,6 +35,27 @@ module PartiduoAdmin
 
     def backup_encryption_key : String
       "admin.encryption.modes.#{backup_encryption}"
+    end
+
+    def kind_key : String
+      "admin.firms.kinds.#{kind}"
+    end
+
+    def fleet? : Bool
+      kind == "fleet"
+    end
+
+    def independent? : Bool
+      kind == "independent"
+    end
+
+    # Mode des opérations sensibles tel que réglé : `single` ou `dual`.
+    def approval_mode : String
+      dual_approval ? "dual" : "single"
+    end
+
+    def approval_mode_key : String
+      "admin.dual_approval.modes.#{approval_mode}"
     end
 
     # Clé du cabinet déposée : `nil` sinon (chaîne vide vraie en gabarit).
@@ -100,7 +130,10 @@ module PartiduoAdmin
       name.empty? ? email.to_s : name
     end
 
+    # Libellé du rôle ; l'admin d'une structure « gestionnaire
+    # indépendant » s'affiche comme tel (D-VAL2-002).
     def role_key : String
+      return "admin.roles.independent_manager" if firm_admin? && firm.try(&.independent?)
       "admin.roles.#{role}"
     end
 

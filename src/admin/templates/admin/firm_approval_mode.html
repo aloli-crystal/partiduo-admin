@@ -1,0 +1,70 @@
+{# SPDX-License-Identifier: AGPL-3.0-or-later. Validation à deux au choix (DECISIONS D-VAL2-001 à D-VAL2-003) : réglage d'une structure (cabinet, gestionnaire indépendant, parc sans cabinet), personnes habilitées, protections de chaque mode, demandes en attente. #}{% extend "admin/base.html" %}
+{% block title %}{% translate "admin.dual_approval.title" %}{% endblock title %}
+{% block crumbs %}{% if nav_fleet %}<li><a href="{% url 'firms' %}">{% translate "admin.firms.title" %}</a></li>{% endif %}<li>{{ firm.name }}</li>{% endblock crumbs %}
+{% block heading %}{% translate "admin.dual_approval.title" %} · {{ firm.name }}{% endblock heading %}
+{% block content %}
+{% if suggested %}<div class="notification is-info is-light" role="status">{% translate "admin.dual_approval.suggested" %}</div>{% endif %}
+<div class="pd-grid">
+  <section class="pd-panel" aria-labelledby="pd-val2-setting-title">
+    <h2 id="pd-val2-setting-title">{% translate "admin.dual_approval.setting" %}</h2>
+    <p class="mb-3"><span class="pd-mode pd-mode-{{ mode }}">{% if mode == "dual" %}{% translate "admin.dual_approval.modes.dual" %}{% else %}{% translate "admin.dual_approval.modes.single" %}{% endif %}</span>{% if changed_at %} <span class="pd-muted">· {% translate "admin.dual_approval.changed_at" %} <span class="pd-mono">{{ changed_at }}</span></span>{% endif %}</p>
+    <form method="post" action="{% url 'firm_approval_mode' id: firm.id %}">
+      {% csrf_input %}
+      <fieldset class="pd-fieldset" aria-describedby="pd-val2-help{% if team_short %} pd-val2-team-short{% endif %}{% if mode_errors %} pd-val2-error{% endif %}"{% if not manage %} disabled{% endif %}>
+        <legend>{% translate "admin.dual_approval.question" %}</legend>
+        <div class="pd-choices">{% for choice in modes %}
+          <label class="pd-choice{% if choice.disabled %} is-disabled{% endif %}">
+            <input type="radio" name="mode" value="{{ choice.value }}"{% if choice.checked %} checked{% endif %}{% if choice.disabled %} disabled{% endif %}>
+            <span><strong>{% translate choice.key %}</strong><span class="pd-choice-help">{% translate choice.help %}</span></span>
+          </label>{% endfor %}
+        </div>
+        {% if team_short %}<p class="help" id="pd-val2-team-short">{% translate "admin.dual_approval.team_short" %}</p>{% endif %}
+        <p class="help" id="pd-val2-help">{% translate "admin.dual_approval.setting_help" %}</p>
+        {% if mode_errors %}<p class="help is-danger" id="pd-val2-error" role="alert">{% for message in mode_errors %}{{ message }} {% endfor %}</p>{% endif %}
+      </fieldset>
+      {% if manage %}<button class="button is-primary" type="submit">{% translate "admin.save" %}</button>{% else %}<p class="help">{% if is_fleet %}{% translate "admin.dual_approval.fleet_only" %}{% else %}{% translate "admin.dual_approval.set_by_firm" %}{% endif %}</p>{% endif %}
+    </form>
+  </section>
+
+  <section class="pd-panel" aria-labelledby="pd-val2-team-title">
+    <h2 id="pd-val2-team-title">{% translate "admin.dual_approval.team_title" %}</h2>
+    <dl class="pd-dl mb-3">
+      <dt>{% translate "admin.firms.kind" %}</dt><dd>{% translate firm.kind_key %}</dd>
+      <dt>{% translate "admin.dual_approval.team_count" %}</dt><dd>{{ team_size }}</dd>
+    </dl>
+    {% if team %}<ul>{% for member in team %}<li>{{ member.display_name }} <span class="pd-muted">· {% translate member.role_key %}</span></li>{% endfor %}</ul>{% else %}<p class="pd-muted">{% translate "admin.dual_approval.team_empty" %}</p>{% endif %}
+    <p class="help mt-2">{% translate "admin.dual_approval.team_help" %}</p>
+  </section>
+</div>
+
+<section class="pd-panel" aria-labelledby="pd-val2-protections-title">
+  <h2 id="pd-val2-protections-title">{% translate "admin.dual_approval.protections_title" %}</h2>
+  <div class="pd-grid">
+    <div>
+      <h3 class="pd-subtitle">{% translate "admin.dual_approval.modes.single" %}</h3>
+      <ul class="pd-list">
+        <li>{% translate "admin.dual_approval.protections.reauth" %}</li>
+        <li>{% translate "admin.dual_approval.protections.confirm" %}</li>
+        <li>{% translate "admin.dual_approval.protections.retention" %}</li>
+        <li>{% translate "admin.dual_approval.protections.cancel" %}</li>
+        <li>{% translate "admin.dual_approval.protections.audit" %}</li>
+      </ul>
+    </div>
+    <div>
+      <h3 class="pd-subtitle">{% translate "admin.dual_approval.modes.dual" %}</h3>
+      <ul class="pd-list">
+        <li>{% translate "admin.dual_approval.protections.other_person" %}</li>
+        <li>{% translate "admin.dual_approval.protections.retention" %}</li>
+        <li>{% translate "admin.dual_approval.protections.audit" %}</li>
+      </ul>
+    </div>
+  </div>
+  <p class="help mt-2">{% translate "admin.dual_approval.switch_help" %}</p>
+</section>
+
+<section class="pd-panel" aria-labelledby="pd-val2-pending-title">
+  <h2 id="pd-val2-pending-title">{% translate "admin.dual_approval.pending_title" %}</h2>
+  {% if pending %}<ul>{% for approval in pending %}<li class="mb-1"><a href="{% url 'approvals' %}" class="pd-mono">{{ approval.reference }}</a> — {% translate approval.kind_key %} · {{ approval.dossier.slug }} · {{ approval.requested_by.email }}</li>{% endfor %}</ul>
+  {% else %}<p class="pd-muted">{% translate "admin.approvals.none" %}</p>{% endif %}
+</section>
+{% endblock content %}

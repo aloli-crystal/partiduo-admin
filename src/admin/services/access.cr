@@ -12,7 +12,9 @@ module PartiduoAdmin
   # |demander un recours d'accès |tous |son cabinet |confiés
   # |créer, suspendre, réactiver, archiver, restaurer, monter de version |tous |son cabinet |—
   # |demander une suppression définitive |tous |son cabinet |—
-  # |valider une double validation (autre que soi) |tous |son cabinet |—
+  # |valider une demande d'un autre (validation à deux) |tous |son cabinet |—
+  # |confirmer seul sa demande (structure « une personne ») |tous |son cabinet |—
+  # |régler la validation à deux |parc sans cabinet |sa structure |—
   # |utilisateurs, affectations, donneurs d'ordre |tous |son cabinet |—
   # |cabinets, serveurs, versions, vagues |oui |— |—
   # |journal d'audit |tout |son cabinet |—

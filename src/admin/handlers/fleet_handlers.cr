@@ -7,7 +7,8 @@ module PartiduoAdmin
       rows = approvals.map do |approval|
         pending = approval.state == "pending"
         {"approval" => approval, "can_decide" => pending && Access.can_approve?(user, approval),
-         "can_withdraw" => pending && approval.requested_by_id == user.pk}
+         "can_withdraw" => pending && approval.requested_by_id == user.pk,
+         "can_confirm" => pending && Approvals.can_confirm_alone?(user, approval)}
       end
       page("admin/approvals.html", {"rows" => rows})
     end

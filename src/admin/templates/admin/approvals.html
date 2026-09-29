@@ -1,21 +1,22 @@
-{# SPDX-License-Identifier: AGPL-3.0-or-later. Doubles validations (ADR-008 D3, D5) : une autre personne habilitée valide. #}{% extend "admin/base.html" %}
+{# SPDX-License-Identifier: AGPL-3.0-or-later. Opérations sensibles (ADR-008 D3, D5) : une autre personne habilitée valide (deux personnes), ou le demandeur confirme seul après ré-authentification (une personne, D-VAL2-004). #}{% extend "admin/base.html" %}
 {% block title %}{% translate "admin.approvals.title" %}{% endblock title %}
 {% block crumbs %}<li>{% translate "admin.approvals.title" %}</li>{% endblock crumbs %}
 {% block heading %}{% translate "admin.approvals.title" %}{% endblock heading %}
 {% block content %}
-<p class="mb-4">{% translate "admin.approvals.help" %}</p>
-{% if rows %}<div class="table-container"><table class="table is-fullwidth is-striped">
+<p class="mb-4" id="pd-approvals-heading">{% translate "admin.approvals.help" %}</p>
+{% if rows %}<div class="table-container" tabindex="0" role="region" aria-labelledby="pd-approvals-heading"><table class="table is-fullwidth is-striped">
   <caption class="is-sr-only">{% translate "admin.approvals.title" %}</caption>
-  <thead><tr><th scope="col">{% translate "admin.approvals.reference" %}</th><th scope="col">{% translate "admin.approvals.kind" %}</th><th scope="col">{% translate "admin.tasks.dossier" %}</th><th scope="col">{% translate "admin.reason" %}</th><th scope="col">{% translate "admin.approvals.requested_by" %}</th><th scope="col">{% translate "admin.approvals.state" %}</th><th scope="col"><span class="is-sr-only">{% translate "admin.actions.title" %}</span></th></tr></thead>
+  <thead><tr><th scope="col">{% translate "admin.approvals.reference" %}</th><th scope="col">{% translate "admin.approvals.kind" %}</th><th scope="col">{% translate "admin.tasks.dossier" %}</th><th scope="col">{% translate "admin.reason" %}</th><th scope="col">{% translate "admin.approvals.requested_by" %}</th><th scope="col">{% translate "admin.dual_approval.mode" %}</th><th scope="col">{% translate "admin.approvals.state" %}</th><th scope="col"><span class="is-sr-only">{% translate "admin.actions.title" %}</span></th></tr></thead>
   <tbody>{% for row in rows %}<tr>
     <td class="pd-mono">{{ row.approval.reference }}</td>
     <td>{% translate row.approval.kind_key %}{% if row.approval.param_email %} {{ row.approval.param_email }}{% endif %}</td>
     <td><a href="{% url 'dossier' id: row.approval.dossier.id %}">{{ row.approval.dossier.slug }}</a></td>
     <td>{{ row.approval.reason }}</td>
     <td>{{ row.approval.requested_by.email }}</td>
+    <td><span class="pd-mode pd-mode-{{ row.approval.mode }}">{% translate row.approval.mode_key %}</span></td>
     <td><span class="pd-state pd-state-{{ row.approval.state }}">{% translate row.approval.state_key %}</span>{% if row.approval.decided_by %} · {{ row.approval.decided_by.email }}{% endif %}</td>
-    <td>{% if row.can_decide %}<form method="post" action="{% url 'approval_decision' id: row.approval.id, decision: 'approve' %}">{% csrf_input %}<button class="button is-small is-primary" type="submit">{% translate "admin.approvals.approve" %}<span class="is-sr-only"> {{ row.approval.reference }}</span></button></form>{% endif %}
-      {% if row.can_decide %}<form method="post" action="{% url 'approval_decision' id: row.approval.id, decision: 'reject' %}">{% csrf_input %}<button class="button is-small" type="submit">{% translate "admin.approvals.reject" %}<span class="is-sr-only"> {{ row.approval.reference }}</span></button></form>{% elsif row.can_withdraw %}<form method="post" action="{% url 'approval_decision' id: row.approval.id, decision: 'reject' %}">{% csrf_input %}<button class="button is-small" type="submit">{% translate "admin.approvals.withdraw" %}<span class="is-sr-only"> {{ row.approval.reference }}</span></button></form>{% endif %}</td>
+    <td><div class="pd-row-actions">{% if row.can_confirm %}<a class="button is-small is-primary" href="{% url 'approval_confirm' id: row.approval.id %}">{% translate "admin.dual_approval.confirm_link" %}<span class="is-sr-only"> {{ row.approval.reference }}</span></a>{% endif %}{% if row.can_decide %}<form method="post" action="{% url 'approval_decision' id: row.approval.id, decision: 'approve' %}">{% csrf_input %}<button class="button is-small is-primary" type="submit">{% translate "admin.approvals.approve" %}<span class="is-sr-only"> {{ row.approval.reference }}</span></button></form>{% endif %}
+      {% if row.can_decide %}<form method="post" action="{% url 'approval_decision' id: row.approval.id, decision: 'reject' %}">{% csrf_input %}<button class="button is-small" type="submit">{% translate "admin.approvals.reject" %}<span class="is-sr-only"> {{ row.approval.reference }}</span></button></form>{% elsif row.can_withdraw %}<form method="post" action="{% url 'approval_decision' id: row.approval.id, decision: 'reject' %}">{% csrf_input %}<button class="button is-small" type="submit">{% translate "admin.approvals.withdraw" %}<span class="is-sr-only"> {{ row.approval.reference }}</span></button></form>{% endif %}</div></td>
   </tr>{% endfor %}</tbody>
 </table></div>{% else %}<p class="pd-muted">{% translate "admin.approvals.none" %}</p>{% endif %}
 {% endblock content %}

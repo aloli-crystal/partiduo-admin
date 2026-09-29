@@ -232,11 +232,13 @@ module PartiduoAdmin
     def post
       Auth::Passkeys.finish_authentication(field("challenge_id"), field("credential_id"), field("authenticator_data"),
         field("client_data_json"), field("signature"), expected_user: user, now: Config.now)
+      # Élévation et ré-authentification forte : l'heure est retenue pour
+      # les opérations confirmées par une seule personne (D-VAL2-004).
       if session = session_record
-        Auth::Sessions.raise_level(session, Auth::PASSKEY, "passkey")
+        Auth::Sessions.mark_strong(session, Auth::PASSKEY, "passkey", Config.now)
       end
       Audit.log(user, "auth.elevate", target: user, ip: ip)
-      json({"ok" => true, "redirect" => "/"}.to_json)
+      json({"ok" => true, "redirect" => safe_next(field("next"), "/")}.to_json)
     rescue error : Auth::Passkeys::Error
       json({"ok" => false, "error" => I18n.t(error.key)}.to_json, status: 422)
     end

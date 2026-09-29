@@ -34,9 +34,12 @@ partiduo-app), tâches idempotentes et reprenables, journal renvoyé.
 
 == Modèle
 
-* *Cabinets*, *utilisateurs d'administration* et trois rôles (ADR-008 D2) :
-  super-admin (tout le parc, passkey exigée), admin de cabinet (son cabinet),
-  gestionnaire de dossiers (dossiers confiés) ; *affectations*.
+* *Structures* : cabinet (plusieurs collaborateurs), gestionnaire
+  indépendant (une seule personne, admin de sa structure, qui gère tous ses
+  dossiers) ou parc sans cabinet (un seul, périmètre propre du super-admin).
+  *Utilisateurs d'administration* et trois rôles (ADR-008 D2) :
+  super-admin (tout le parc, passkey exigée), admin de cabinet (sa
+  structure), gestionnaire de dossiers (dossiers confiés) ; *affectations*.
 * *Donneurs d'ordre* : qui commande et paie un dossier (cabinet, la société
   elle-même, autre payeur) — identité, SIREN, adresse de facturation,
   contact. La facturation (tarifs, périodes, factures) est hors périmètre ;
@@ -45,7 +48,8 @@ partiduo-app), tâches idempotentes et reprenables, journal renvoyé.
   serveur, version, état, cabinet gestionnaire, donneur d'ordre obligatoire.
 * *Serveurs* (jeton d'exécutant en empreinte), *tâches*, *vagues* de
   montée de version, *sauvegardes* (mode de chiffrement, empreinte de la
-  clé), *versions*, *doubles validations*,
+  clé), *versions*, *demandes d'opérations sensibles* (mode à une ou deux
+  personnes),
   *alertes*, *certificats émis* (quota Let's Encrypt) et *journal d'audit*
   en ajout seul (déclencheur PostgreSQL).
 
@@ -55,14 +59,68 @@ Les droits par rôle sont tous dans `src/admin/services/access.cr`.
 
 Créer ; modifier modules et extensions ; suspendre ; réactiver ; archiver
 (sauvegarde figée vérifiée, conservation dix ans) ; restaurer l'archive ;
-supprimer définitivement après la durée légale avec double validation ;
+supprimer définitivement après la durée légale (à une ou deux personnes,
+voir ci-dessous) ;
 sauvegardes planifiées, rétention, restauration à une date (instance neuve
 ou remplacement), restauration test ; montée de version par dossier ou par
 vagues avec sauvegarde préalable et retour arrière ; supervision (service,
 base, certificat et échéance, quota Let's Encrypt, disque, dernière
 sauvegarde, exécutant silencieux) avec alertes à l'écran et par courriel ;
-recours d'accès par réémission de l'invitation d'administrateur avec double
-validation.
+recours d'accès par réémission de l'invitation d'administrateur (à une ou
+deux personnes).
+
+== Validation à deux au choix
+
+Les *opérations sensibles* — suppression définitive et recours d'accès —
+passent par une demande. Chaque structure règle si elles exigent deux
+personnes (DECISIONS D-VAL2-001 à D-VAL2-008 de partiduo-app) : écran
+« Validation à deux » (menu de l'admin de la structure ; colonne de la liste
+des structures et menu du parc sans cabinet pour le super-admin).
+
+[cols="1,3",options="header"]
+|===
+|Mode |Effet
+
+|Une personne (défaut)
+|Le demandeur, s'il est habilité à valider (admin de la structure ou
+super-admin), confirme seul sur la page « Confirmer seul » :
+ré-authentification forte de moins de cinq minutes (passkey, ou code TOTP
+pour les rôles au niveau 2 ; la connexion elle-même compte), puis
+confirmation explicite — sous-domaine du dossier retapé pour une
+suppression définitive, case cochée pour un recours d'accès. La demande
+d'un gestionnaire de dossiers attend toujours un admin.
+
+|Deux personnes
+|Une autre personne habilitée (admin de la structure ou super-admin) valide,
+comme avant. Le demandeur ne peut pas confirmer seul.
+|===
+
+* *Qui règle* : l'admin de la structure (cabinet, gestionnaire
+  indépendant) ; le super-admin règle le parc sans cabinet et consulte les
+  autres sans les changer.
+* *Défaut* : une personne pour toute nouvelle structure ; proposée (bandeau)
+  à un cabinet d'au moins deux personnes habilitées, jamais imposée. Reprise
+  des données : un cabinet qui comptait déjà deux admins actifs reste à deux
+  personnes.
+* *Personnes habilitées* : admins actifs de la structure ; pour le parc sans
+  cabinet, les super-admins actifs. Le mode « deux personnes » est refusé
+  sous deux ; si l'équipe y retombe (compte désactivé, départ), il se
+  désactive de lui-même (`dual_approval.auto_off` au journal d'audit, à la
+  désactivation et à chaque planification).
+* *Bascule* (`dual_approval.change`) : une demande en attente reste en
+  attente si l'on passe à deux personnes ; si l'on revient à une personne,
+  son demandeur peut la confirmer seul après ré-authentification.
+* *Ce qui ne change pas* : durée légale et état « archivé » revérifiés par
+  l'exécutant (D-CRA-007), tâche annulable tant qu'elle attend, jamais
+  rejouée après un échec (D-AFN-010), journal d'audit
+  (`approval.request`, `approval.confirm_alone`, `approval.approve`,
+  `auth.reauth`).
+* *Exécutant* (API 1.2.0) : chaque tâche porte `approval_mode` (`single` ou
+  `dual`) et `approvers` ; l'exécutant exige un nom en mode une personne et
+  deux noms distincts en mode deux personnes (absent : deux), l'écrit au
+  journal de la tâche, et pour un recours d'accès passe à l'instance
+  `--approvers <nom>,validation-une-personne` (le contrat 1.0.0 exige deux
+  noms ; B-VAL2-001).
 
 == Sauvegardes et chiffrement
 

@@ -283,7 +283,8 @@ module PartiduoAdmin
                     now : Time = Time.utc) : Opened
         token = Secrets.token
         session = Session.create!(user: user, token_digest: Secrets.digest(token), level: level, method: method,
-          ip: ip[0, 64], user_agent: user_agent[0, 255], last_seen_at: now, expires_at: now + Config::SESSION_LIFETIME)
+          ip: ip[0, 64], user_agent: user_agent[0, 255], last_seen_at: now, expires_at: now + Config::SESSION_LIFETIME,
+          strong_auth_at: level >= Auth.required_level(user) ? now : nil)
         if level > ENROLLMENT
           user.last_login_at = now
           user.save!
@@ -310,6 +311,27 @@ module PartiduoAdmin
         session.level = level
         session.method = method
         session.save!
+      end
+
+      # Authentification forte à l'instant (élévation par passkey,
+      # ré-authentification) : niveau relevé s'il le faut, heure retenue.
+      def self.mark_strong(session : Session, level : Int32, method : String, now : Time = Time.utc) : Nil
+        if (session.level || 0) < level
+          session.level = level
+          session.method = method
+        end
+        session.strong_auth_at = now
+        session.save!
+      end
+
+      # Authentification forte récente : au niveau exigé du rôle, depuis
+      # moins de `Config::REAUTH_WINDOW` (D-VAL2-004).
+      def self.recent_strong?(session : Session?, now : Time = Time.utc) : Bool
+        return false if session.nil?
+        user = session.user
+        return false if user.nil? || (session.level || 0) < Auth.required_level(user)
+        at = session.strong_auth_at
+        !at.nil? && at > now - Config::REAUTH_WINDOW && at <= now + 1.minute
       end
 
       def self.revoke(session : Session, now : Time = Time.utc) : Nil
@@ -352,6 +374,33 @@ module PartiduoAdmin
         return if raw.nil? || raw.empty?
         Invitation.filter(digest: Secrets.digest(raw), used_at__isnull: true, expires_at__gt: now).first.try(&.user)
       end
+    end
+
+    # Ré-authentification par code TOTP d'une session ouverte (rôles au
+    # niveau 2 ; le super-admin passe par sa passkey). Même limitation des
+    # tentatives que la connexion ; un code de récupération n'est pas
+    # accepté ici (il reste pour la perte du téléphone). Rend une clé
+    # d'erreur (et l'attente), ou une erreur vide si la session est
+    # désormais forte.
+    def self.reauthenticate_totp(session : Session, code : String, ip : String = "", now : Time = Time.utc) : LoginResult
+      user = session.user
+      return LoginResult.new(error: "admin.errors.login.expired") if user.nil? || !user.can_sign_in?
+      return LoginResult.new(error: "admin.errors.reauth.no_totp") if user.super_admin? || !user.totp_enabled?
+      reservation = Throttle.reserve(user, now)
+      unless reservation.granted
+        return LoginResult.new(error: reservation.locked ? "admin.errors.login.locked" : "admin.errors.login.wait",
+          wait: reservation.wait)
+      end
+      cleaned = code.gsub(/\s/, "")
+      unless cleaned.matches?(/\A\d{6}\z/) && Totp.verify!(user, cleaned, now)
+        Throttle.confirm_failure(user, now)
+        Audit.log(user, "auth.reauth", outcome: "fail", target: user, detail: {"method" => "totp"}, ip: ip)
+        return LoginResult.new(error: user.locked? ? "admin.errors.login.locked" : "admin.errors.login.code")
+      end
+      Throttle.record_success(user)
+      Sessions.mark_strong(session, TWO_FACTOR, "totp", now)
+      Audit.log(user, "auth.reauth", target: user, detail: {"method" => "totp"}, ip: ip)
+      LoginResult.new
     end
 
     # Connexion par mot de passe, puis second facteur. Renvoie une clé

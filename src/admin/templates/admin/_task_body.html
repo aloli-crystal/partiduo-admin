@@ -5,6 +5,7 @@
       <dt>{% translate "admin.tasks.state" %}</dt><dd><span class="pd-state pd-state-{{ task.state }}" role="status">{% translate task.state_key %}</span></dd>
       <dt>{% translate "admin.tasks.attempts" %}</dt><dd>{{ task.attempts }}</dd>
       <dt>{% translate "admin.tasks.requested_by" %}</dt><dd>{{ task.requested_by_label }}</dd>
+      {% if task.approval_mode_key %}<dt>{% translate "admin.dual_approval.mode" %}</dt><dd><span class="pd-mode">{% translate task.approval_mode_key %}</span> <span class="pd-mono pd-muted">{{ task.approval_summary }}</span></dd>{% endif %}
       <dt>{% translate "admin.tasks.created_at" %}</dt><dd class="pd-mono">{{ task.created_at|time:"%Y-%m-%d %H:%M:%S" }}</dd>
       {% if task.finished_at %}<dt>{% translate "admin.tasks.finished_at" %}</dt><dd class="pd-mono">{{ task.finished_at|time:"%Y-%m-%d %H:%M:%S" }}</dd>{% endif %}
       {% if task.error_text %}<dt>{% translate "admin.tasks.error" %}</dt><dd>{{ task.error_text }}</dd>{% endif %}

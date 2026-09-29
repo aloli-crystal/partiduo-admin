@@ -1,18 +1,31 @@
-{# SPDX-License-Identifier: AGPL-3.0-or-later. Cabinets comptables (ADR-008 D2), gérés par le super-admin. #}{% extend "admin/base.html" %}
+{# SPDX-License-Identifier: AGPL-3.0-or-later. Structures (ADR-008 D2, DECISIONS D-VAL2-002) : cabinets, gestionnaires indépendants, parc sans cabinet, gérés par le super-admin ; mode des opérations sensibles et chiffrement de chacune. #}{% extend "admin/base.html" %}
 {% block title %}{% translate "admin.firms.title" %}{% endblock title %}
 {% block crumbs %}<li>{% translate "admin.firms.title" %}</li>{% endblock crumbs %}
 {% block heading %}{% translate "admin.firms.title" %}{% endblock heading %}
 {% block content %}
-{% if firms %}<ul class="pd-panel">{% for firm in firms %}<li class="mb-1">{{ firm.name }}{% if firm.siren %} · <span class="pd-mono">{{ firm.siren }}</span>{% endif %}{% if firm.email %} · {{ firm.email }}{% endif %} · <a href="{% url 'firm_backups' id: firm.id %}">{% translate "admin.encryption.title" %}<span class="is-sr-only"> {{ firm.name }}</span></a> <span class="pd-muted">({% translate firm.backup_encryption_key %})</span></li>{% endfor %}</ul>{% endif %}
+{% if firms %}<div class="table-container mb-2" tabindex="0" role="region" aria-labelledby="pd-firms-caption"><table class="table is-fullwidth is-striped">
+  <caption id="pd-firms-caption" class="is-sr-only">{% translate "admin.firms.title" %}</caption>
+  <thead><tr><th scope="col">{% translate "admin.firms.name" %}</th><th scope="col">{% translate "admin.firms.kind" %}</th><th scope="col" class="pd-hide-s">{% translate "admin.payers.fields.siren" %}</th><th scope="col">{% translate "admin.dual_approval.title" %}</th><th scope="col">{% translate "admin.encryption.title" %}</th></tr></thead>
+  <tbody>{% for row in firms %}<tr>
+    <th scope="row">{{ row.firm.name }}{% if row.firm.email %}<br><span class="pd-muted">{{ row.firm.email }}</span>{% endif %}</th>
+    <td>{% translate row.firm.kind_key %}</td>
+    <td class="pd-mono pd-hide-s">{{ row.firm.siren|default:"—" }}</td>
+    <td><a href="{% url 'firm_approval_mode' id: row.firm.id %}">{% translate row.mode_key %}<span class="is-sr-only"> — {{ row.firm.name }}</span></a> <span class="pd-muted">({{ row.team }})</span></td>
+    <td><a href="{% url 'firm_backups' id: row.firm.id %}">{% translate row.firm.backup_encryption_key %}<span class="is-sr-only"> — {{ row.firm.name }}</span></a></td>
+  </tr>{% endfor %}</tbody>
+</table></div>
+<p class="help mb-4">{% translate "admin.firms.team_note" %}</p>{% endif %}
 <form method="post" action="{% url 'firms' %}" class="pd-panel" novalidate>
   <h2 class="title is-6">{% translate "admin.firms.new" %}</h2>
   {% csrf_input %}
   {% if errors %}<div class="notification is-danger is-light" role="alert">{% for field, messages in errors %}{% for message in messages %}<p>{{ message }}</p>{% endfor %}{% endfor %}</div>{% endif %}
   <div class="pd-inline">
+    <div class="field"><label class="label" for="pd-firm-kind">{% translate "admin.firms.kind" %}</label><div class="select"><select id="pd-firm-kind" name="kind" aria-describedby="pd-firm-kind-help">{% for kind in kinds %}{% if kind.value == "fleet" %}{% if not fleet_exists %}<option value="{{ kind.value }}"{% if kind.selected %} selected{% endif %}>{% translate kind.key %}</option>{% endif %}{% else %}<option value="{{ kind.value }}"{% if kind.selected %} selected{% endif %}>{% translate kind.key %}</option>{% endif %}{% endfor %}</select></div></div>
     <div class="field"><label class="label" for="pd-firm-name">{% translate "admin.firms.name" %}</label><div class="control"><input class="input" id="pd-firm-name" name="name" value="{{ name }}" required></div></div>
     <div class="field"><label class="label" for="pd-firm-siren">{% translate "admin.payers.fields.siren" %}</label><div class="control"><input class="input pd-mono" id="pd-firm-siren" name="siren" value="{{ siren }}" inputmode="numeric"></div></div>
     <div class="field"><label class="label" for="pd-firm-email">{% translate "admin.users.fields.email" %}</label><div class="control"><input class="input" id="pd-firm-email" name="email" type="email" value="{{ email }}"></div></div>
     <button class="button is-primary" type="submit">{% translate "admin.create" %}</button>
   </div>
+  <p class="help" id="pd-firm-kind-help">{% translate "admin.firms.kind_help" %}</p>
 </form>
 {% endblock content %}

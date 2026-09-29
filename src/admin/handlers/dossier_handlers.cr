@@ -120,6 +120,8 @@ module PartiduoAdmin
         "can"              => flags(dossier),
         "encryption_modes" => encryption_modes(dossier),
         "firm_mode_key"    => dossier.firm!.backup_encryption_key,
+        "approval_mode"    => ApprovalMode.mode_for(dossier),
+        "confirms_alone"   => Access.can?(user, :approve, dossier),
         "today"            => Config.now.to_s("%F"),
       })
     end
@@ -240,7 +242,8 @@ module PartiduoAdmin
     end
   end
 
-  # Demandes à double validation : suppression définitive, recours d'accès.
+  # Opérations sensibles : suppression définitive, recours d'accès, à une
+  # ou deux personnes selon le réglage de la structure (D-VAL2-001).
   class DossierApprovalRequestHandler < ScreenHandler
     def post
       dossier = dossier!
@@ -250,7 +253,15 @@ module PartiduoAdmin
                 else               Fleet::Outcome(Approval).failure("base", "admin.errors.invalid")
                 end
       if outcome.ok?
-        flash["success"] = I18n.t("admin.approvals.requested", reference: outcome.value!.reference.to_s)
+        approval = outcome.value!
+        # Une personne : le demandeur habilité confirme aussitôt, après
+        # ré-authentification (D-VAL2-004).
+        if Approvals.can_confirm_alone?(user, approval)
+          flash["info"] = I18n.t("admin.dual_approval.requested_single", reference: approval.reference.to_s)
+          return go("/approvals/#{approval.pk}/confirm")
+        end
+        key = approval.mode == ApprovalMode::DUAL ? "admin.approvals.requested" : "admin.dual_approval.requested_admin"
+        flash["success"] = I18n.t(key, reference: approval.reference.to_s)
       else
         flash["danger"] = outcome.errors.values.flatten.map { |key| I18n.t(key) }.join(" ")
       end

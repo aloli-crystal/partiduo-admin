@@ -34,6 +34,11 @@ module PartiduoAdmin
     # Double validation : une demande non validée expire.
     APPROVAL_TTL = 7.days
 
+    # Opération sensible confirmée par une seule personne : authentification
+    # forte (niveau exigé du rôle) datant de moins de cinq minutes
+    # (D-VAL2-004).
+    REAUTH_WINDOW = 5.minutes
+
     # Quota Let's Encrypt : 50 certificats par semaine pour le domaine
     # enregistré (ADR-001 D2). Alerte à partir de `LE_WARNING`.
     LE_WEEKLY_LIMIT = 50

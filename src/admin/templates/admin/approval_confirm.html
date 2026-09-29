@@ -1,0 +1,71 @@
+{# SPDX-License-Identifier: AGPL-3.0-or-later. Confirmation d'une opération sensible par le demandeur seul (structure réglée sur « une personne », DECISIONS D-VAL2-004) : ré-authentification forte récente, puis confirmation explicite. #}{% extend "admin/base.html" %}
+{% block title %}{% translate "admin.dual_approval.confirm_title" %}{% endblock title %}
+{% block crumbs %}<li><a href="{% url 'approvals' %}">{% translate "admin.approvals.title" %}</a></li><li>{{ approval.reference }}</li>{% endblock crumbs %}
+{% block heading %}{% translate "admin.dual_approval.confirm_title" %} · {% translate approval.kind_key %}{% endblock heading %}
+{% block content %}
+{% if errors %}<div class="notification is-danger is-light" role="alert">{% for message in errors %}<p>{{ message }}</p>{% endfor %}</div>{% endif %}
+<section class="pd-panel" aria-labelledby="pd-confirm-summary-title">
+  <h2 id="pd-confirm-summary-title">{% translate "admin.dual_approval.summary" %}</h2>
+  <dl class="pd-dl">
+    <dt>{% translate "admin.approvals.reference" %}</dt><dd class="pd-mono">{{ approval.reference }}</dd>
+    <dt>{% translate "admin.approvals.kind" %}</dt><dd>{% translate approval.kind_key %}{% if approval.param_email %} · {{ approval.param_email }}{% endif %}</dd>
+    <dt>{% translate "admin.tasks.dossier" %}</dt><dd><a href="{% url 'dossier' id: dossier.id %}">{{ dossier.slug }}</a> — {{ dossier.label }}</dd>
+    <dt>{% translate "admin.reason" %}</dt><dd>{{ approval.reason }}</dd>
+    <dt>{% translate "admin.dual_approval.mode" %}</dt><dd><span class="pd-mode pd-mode-{{ mode }}">{% if mode == "dual" %}{% translate "admin.dual_approval.modes.dual" %}{% else %}{% translate "admin.dual_approval.modes.single" %}{% endif %}</span></dd>
+    <dt>{% translate "admin.approvals.state" %}</dt><dd><span class="pd-state pd-state-{{ approval.state }}">{% translate approval.state_key %}</span></dd>
+  </dl>
+</section>
+
+{% if not pending %}
+<p class="notification is-light is-info" role="status">{% translate "admin.dual_approval.not_pending" %}</p>
+{% elsif mode == "dual" %}
+<p class="notification is-light is-warning" role="status">{% translate "admin.dual_approval.now_dual" %}</p>
+{% elsif needs_admin %}
+<p class="notification is-light is-warning" role="status">{% translate "admin.dual_approval.needs_admin" %}</p>
+{% else %}
+<section class="pd-panel" aria-labelledby="pd-reauth-title">
+  <h2 id="pd-reauth-title">{% translate "admin.reauth.title" %}</h2>
+  {% if recent %}<p class="pd-ok-text" role="status">{% translate "admin.reauth.recent" %} <span class="pd-mono">{{ strong_at }}</span></p>
+  {% else %}<p class="mb-3">{% translate "admin.reauth.needed" %} ({{ window }} min)</p>
+    {% if has_passkey %}<div class="buttons">
+      <button type="button" class="button is-link" data-passkey="elevate" data-options-url="{% url 'elevate_options' %}" data-submit-url="{% url 'elevate' %}" data-next="{{ confirm_path }}" data-status="pd-reauth-status">{% translate "admin.reauth.passkey" %}</button>
+    </div>
+    <p class="help" id="pd-reauth-status" role="status" aria-live="polite" data-unsupported="{% translate 'admin.passkey.unsupported' %}" data-failed="{% translate 'admin.passkey.failed' %}" data-waiting="{% translate 'admin.passkey.waiting' %}"></p>{% endif %}
+    {% if has_totp %}<form method="post" action="{% url 'reauth_totp' %}" class="pd-inline{% if has_passkey %} mt-3{% endif %}">
+      {% csrf_input %}
+      <input type="hidden" name="next" value="{{ confirm_path }}">
+      <div class="field"><label class="label" for="pd-reauth-code">{% translate "admin.reauth.totp" %}</label><div class="control"><input class="input pd-mono" id="pd-reauth-code" name="code" type="text" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9 ]{6,7}" required aria-describedby="pd-reauth-code-help"></div></div>
+      <button class="button is-link" type="submit">{% translate "admin.login.verify" %}</button>
+    </form>
+    <p class="help" id="pd-reauth-code-help">{% translate "admin.reauth.totp_help" %}</p>{% endif %}
+    {% if not has_passkey %}{% if not has_totp %}<p class="help">{% translate "admin.reauth.no_means" %}</p>{% endif %}{% endif %}
+  {% endif %}
+</section>
+
+<form method="post" action="{{ confirm_path }}" class="pd-panel" aria-labelledby="pd-confirm-title">
+  <h2 id="pd-confirm-title">{% translate "admin.dual_approval.confirm_step" %}</h2>
+  {% csrf_input %}
+  {% if is_delete %}
+  <p class="notification is-danger is-light">{% translate "admin.dual_approval.delete_warning" %}</p>
+  <div class="field">
+    <label class="label" for="pd-confirmation">{% translate "admin.dual_approval.type_slug" %} <span class="pd-mono">{{ dossier.slug }}</span><span class="pd-required" aria-hidden="true"> *</span></label>
+    <div class="control"><input class="input pd-mono" id="pd-confirmation" name="confirmation" type="text" value="{{ confirmation_value }}" autocomplete="off" spellcheck="false" required aria-describedby="pd-confirmation-help{% if confirm_errors %} pd-confirmation-error{% endif %}"{% if confirm_errors %} aria-invalid="true"{% endif %}></div>
+    <p class="help" id="pd-confirmation-help">{% translate "admin.dual_approval.type_slug_help" %}</p>
+    {% if confirm_errors %}<p class="help is-danger" id="pd-confirmation-error">{% for message in confirm_errors %}{{ message }} {% endfor %}</p>{% endif %}
+  </div>
+  {% else %}
+  <div class="field">
+    <label class="pd-choice"><input type="checkbox" name="confirm" value="yes" required aria-describedby="pd-confirm-help{% if confirm_errors %} pd-confirmation-error{% endif %}"{% if confirm_errors %} aria-invalid="true"{% endif %}><span>{% translate "admin.dual_approval.confirm_access" %} <strong>{{ approval.param_email }}</strong></span></label>
+    <p class="help" id="pd-confirm-help">{% translate "admin.dual_approval.confirm_access_help" %}</p>
+    {% if confirm_errors %}<p class="help is-danger" id="pd-confirmation-error">{% for message in confirm_errors %}{{ message }} {% endfor %}</p>{% endif %}
+  </div>
+  {% endif %}
+  <div class="buttons">
+    <button class="button {% if is_delete %}is-danger{% else %}is-primary{% endif %}" type="submit"{% if not recent %} aria-describedby="pd-confirm-reauth-note"{% endif %}>{% translate "admin.dual_approval.confirm_button" %}</button>
+    <a class="button" href="{% url 'approvals' %}">{% translate "admin.cancel" %}</a>
+  </div>
+  {% if not recent %}<p class="help" id="pd-confirm-reauth-note">{% translate "admin.reauth.before_confirm" %}</p>{% endif %}
+</form>
+{% endif %}
+{% if approval.state == "pending" %}<form method="post" action="{% url 'approval_decision' id: approval.id, decision: 'reject' %}" class="mt-2">{% csrf_input %}<button class="button is-small" type="submit">{% translate "admin.approvals.withdraw" %}</button></form>{% endif %}
+{% endblock content %}

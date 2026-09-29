@@ -16,6 +16,10 @@ module PartiduoAdmin
     field :last_seen_at, :date_time
     field :expires_at, :date_time
     field :revoked_at, :date_time, null: true, blank: true
+    # Dernière authentification forte (au niveau exigé du rôle) : connexion,
+    # élévation ou ré-authentification. Une opération sensible confirmée
+    # par une seule personne l'exige récente (D-VAL2-004).
+    field :strong_auth_at, :date_time, null: true, blank: true
   end
 
   # Défi à usage unique (WebAuthn, second facteur en attente).

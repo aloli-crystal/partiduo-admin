@@ -9,8 +9,21 @@ module PartiduoAdmin
     # un type de tâche, une clé ou un état incrémente la majeure ; en ajouter
     # incrémente la mineure (1.1.0 : chiffrement des sauvegardes — clés
     # `encryption`, `backup_encryption`, `media_sha256`, `key_provided` des
-    # paramètres, `secrets.data_keys` de la tâche réclamée, D-CHF-010).
-    API_VERSION = "1.1.0"
+    # paramètres, `secrets.data_keys` de la tâche réclamée, D-CHF-010 ;
+    # 1.2.0 : `approval_mode` des opérations sensibles, D-VAL2-005).
+    API_VERSION = "1.2.0"
+
+    # Mode de validation d'une opération sensible (`instance.delete`,
+    # `instance.admin_invite`) : `single`, une personne qui a confirmé seule
+    # après ré-authentification ; `dual`, deux personnes distinctes. Absent
+    # (administration antérieure à 1.2.0) : `dual`.
+    APPROVAL_MODES = %w[single dual]
+
+    # Second nom passé à `manage instance admin-invite --approvers` quand
+    # une seule personne a décidé : le contrat 1.0.0 de l'instance exige
+    # deux noms ; celui-ci dit, dans le journal du dossier, qu'il n'y a pas
+    # eu de seconde personne (D-VAL2-005, B-VAL2-001).
+    SINGLE_APPROVER_MARK = "validation-une-personne"
 
     # Version majeure du contrat `manage instance` de partiduo-app que
     # l'exécutant sait parler (doc/api/instance-cli.adoc de partiduo-app).

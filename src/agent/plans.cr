@@ -348,15 +348,15 @@ module PartiduoAgent
       ctx.set("version", ctx.instance!("status")["version"]? || "")
     end
 
-    # Suppression définitive (après la durée légale et double validation,
-    # vérifiées par l'admin) : service et fichiers retirés, base supprimée,
-    # sauvegardes effacées.
+    # Suppression définitive (après la durée légale et la validation, à une
+    # ou deux personnes, vérifiées par l'admin) : service et fichiers
+    # retirés, base supprimée, sauvegardes effacées.
     def self.delete(ctx : Context) : Nil
       # Chemins vérifiés avant tout geste : une liste qui vise un autre
       # dossier n'a rien retiré (D-CRA-001).
       backups = ctx.list("backups").map { |path| ctx.own_backup!(path) }
       ctx.system.guard_retention!(ctx.slug)
-      ctx.log("suppression définitive — validation #{ctx.param("approval_ref")} par #{ctx.list("approvers").join(", ")}")
+      ctx.log("suppression définitive — #{approval_line(ctx)}")
       ctx.step("retrait du service") { ctx.system.remove_instance(ctx.slug, ctx.host) }
       ctx.step("suppression de la base") { ctx.system.dropdb(ctx.database) }
       ctx.step("suppression des sauvegardes") do
@@ -425,14 +425,50 @@ module PartiduoAgent
       system.service(ctx.slug, "start")
     end
 
-    # --- Recours d'accès (double validation faite dans l'admin) --------------
+    # --- Opérations sensibles : mode de validation (D-VAL2-005) --------------
+
+    # Mode reçu : `single` ou `dual` ; absent, `dual` (administration
+    # antérieure à l'API 1.2.0). Toute autre valeur est refusée.
+    def self.approval_mode(ctx : Context) : String
+      mode = ctx.param("approval_mode").presence || "dual"
+      raise StepError.new("mode de validation refusé : #{mode}", "usage") unless PartiduoAdmin::Protocol::APPROVAL_MODES.includes?(mode)
+      mode
+    end
+
+    # Personnes cohérentes avec le mode : exactement une pour `single`, au
+    # moins deux distinctes pour `dual` ; aucune valeur prise pour une
+    # option ni séparateur (D-CRA-002).
+    def self.checked_approvers(ctx : Context) : Array(String)
+      approvers = ctx.list("approvers").map(&.strip)
+      if approvers.any? { |approver| approver.empty? || approver.starts_with?('-') || approver.includes?(',') || approver.includes?('\n') }
+        raise StepError.new("valeur refusée pour approvers", "usage")
+      end
+      distinct = approvers.map(&.downcase).uniq!.size
+      case approval_mode(ctx)
+      when "single"
+        raise StepError.new("validation à une personne : un seul nom attendu", "usage") unless approvers.size == 1
+      else
+        raise StepError.new("validation à deux personnes incomplète", "usage") unless distinct >= 2
+      end
+      approvers
+    end
+
+    # Ligne du journal : mode, référence et personnes.
+    def self.approval_line(ctx : Context) : String
+      approvers = checked_approvers(ctx)
+      label = approval_mode(ctx) == "single" ? "validation à une personne" : "validation à deux personnes"
+      "#{label} #{ctx.param("approval_ref")} par #{approvers.join(", ")}"
+    end
+
+    # --- Recours d'accès (décision prise dans l'admin) -----------------------
 
     def self.admin_invite(ctx : Context) : Nil
       check_contract(ctx)
-      approvers = ctx.list("approvers")
-      if approvers.any? { |approver| approver.starts_with?('-') || approver.includes?(',') || approver.includes?('\n') }
-        raise StepError.new("valeur refusée pour approvers", "usage")
-      end
+      approvers = checked_approvers(ctx)
+      ctx.log("recours d'accès — #{approval_line(ctx)}")
+      # Une personne : le contrat 1.0.0 de l'instance exige deux noms ; le
+      # second dit qu'il n'y en a pas eu (D-VAL2-005, B-VAL2-001).
+      approvers += [PartiduoAdmin::Protocol::SINGLE_APPROVER_MARK] if approval_mode(ctx) == "single"
       data = ctx.instance!("admin-invite", [ctx.value_arg("email"), "--reason", ctx.value_arg("reason"),
                                             "--approval-ref", ctx.value_arg("approval_ref"),
                                             "--approvers", approvers.join(',')])

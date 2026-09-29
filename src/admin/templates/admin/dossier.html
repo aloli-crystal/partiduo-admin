@@ -99,11 +99,12 @@
   <section class="pd-panel" aria-labelledby="pd-access-title">
     <h2 id="pd-access-title">{% translate "admin.actions.access" %}</h2>
     <p class="mb-2">{% translate "admin.actions.access_help" %}</p>
+    {% include "admin/_approval_mode_note.html" %}
     <form method="post" action="{% url 'dossier_request' id: dossier.id, kind: 'access' %}">
       {% csrf_input %}
       <div class="field"><label class="label" for="pd-access-email">{% translate "admin.dossiers.fields.admin_email" %}</label><div class="control"><input class="input" id="pd-access-email" name="email" type="email" value="{{ dossier.admin_email }}" required></div></div>
       <div class="field"><label class="label" for="pd-access-reason">{% translate "admin.reason" %}</label><div class="control"><textarea class="textarea" id="pd-access-reason" name="reason" rows="2" required></textarea></div></div>
-      <button class="button" type="submit">{% translate "admin.approvals.request" %}</button>
+      <button class="button" type="submit">{% if approval_mode == "single" %}{% if confirms_alone %}{% translate "admin.dual_approval.request_single" %}{% else %}{% translate "admin.approvals.request" %}{% endif %}{% else %}{% translate "admin.approvals.request" %}{% endif %}</button>
     </form>
   </section>
   {% endif %}
@@ -111,10 +112,11 @@
   <section class="pd-panel" aria-labelledby="pd-delete-title">
     <h2 id="pd-delete-title">{% translate "admin.actions.delete" %}</h2>
     <p class="mb-2">{% translate "admin.actions.delete_help" %}</p>
+    {% include "admin/_approval_mode_note.html" %}
     <form method="post" action="{% url 'dossier_request' id: dossier.id, kind: 'delete' %}">
       {% csrf_input %}
       <div class="field"><label class="label" for="pd-delete-reason">{% translate "admin.reason" %}</label><div class="control"><textarea class="textarea" id="pd-delete-reason" name="reason" rows="2" required></textarea></div></div>
-      <button class="button is-danger" type="submit">{% translate "admin.approvals.request" %}</button>
+      <button class="button is-danger" type="submit">{% if approval_mode == "single" %}{% translate "admin.dual_approval.request_single" %}{% else %}{% translate "admin.approvals.request" %}{% endif %}</button>
     </form>
   </section>
   {% endif %}
