@@ -51,10 +51,10 @@ module AdminSpec
 
   def self.dossier(firm : PartiduoAdmin::Firm, server : PartiduoAdmin::Server, state : String = "active",
                    slug : String = "dossier#{next_id}", payer : PartiduoAdmin::Payer? = nil,
-                   version : String = "0.1.0") : PartiduoAdmin::Dossier
+                   version : String = "0.1.0", package : String = "app") : PartiduoAdmin::Dossier
     PartiduoAdmin::Dossier.create!(slug: slug, label: "Société #{slug}", regime: "fr", modules: "accounting,invoicing",
       admin_email: "patron@#{slug}.example.com", server: server, firm: firm, payer: payer || self.payer(firm),
-      state: state, version: version, database: "partiduo_adm_#{slug.tr("-", "_")}")
+      state: state, version: version, package: package, database: "partiduo_adm_#{slug.tr("-", "_")}")
   end
 
   def self.totp_code(user : PartiduoAdmin::User, time : Time = Time.utc) : String

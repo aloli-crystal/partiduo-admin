@@ -2,10 +2,11 @@
 
 require "../spec_helper"
 
-private def input(firm, server, payer, slug = "demo-fr", payer_id = :default)
+private def input(firm, server, payer, slug = "demo-fr", payer_id = :default, package = "app")
   PartiduoAdmin::Fleet::DossierInput.new(slug: slug, label: "Démo FR SARL", regime: "fr", siren: "732829320",
     modules: ["accounting", "invoicing"], extensions: ["skel"], admin_email: "patron@demo.fr",
-    server_id: PartiduoAdmin.id?(server.pk), firm_id: PartiduoAdmin.id?(firm.pk), payer_id: payer_id == :default ? PartiduoAdmin.id?(payer.pk) : nil)
+    server_id: PartiduoAdmin.id?(server.pk), firm_id: PartiduoAdmin.id?(firm.pk), payer_id: payer_id == :default ? PartiduoAdmin.id?(payer.pk) : nil,
+    package: package)
 end
 
 private def finish(task, ok = true, result = {} of String => String)
@@ -34,6 +35,9 @@ describe PartiduoAdmin::Fleet do
     task.params_json["name"].should eq("Démo FR SARL")
     task.params_json["extensions"].as_a.map(&.as_s).should eq(["skel"])
     task.params_json["host"].should eq("demo-fr.partiduo.localhost")
+    dossier.package.should eq("app")
+    task.params_json["package"].should eq("app")
+    task.params_json["version"]?.should be_nil
 
     PartiduoAdmin::Fleet.create_dossier(admin, input(firm, server, payer)).errors["slug"].should eq(["admin.errors.dossier.slug_taken"])
   end
@@ -112,10 +116,10 @@ describe PartiduoAdmin::Fleet do
     PartiduoAdmin::Fleet.backup_now(manager, dossier).ok?.should be_true
   end
 
-  it "restaure à une date la dernière sauvegarde prise avant, dans une instance neuve" do
+  it "restaure à une date la dernière sauvegarde prise avant, dans une instance neuve du même paquet" do
     firm = AdminSpec.firm
     server, _ = AdminSpec.server
-    dossier = AdminSpec.dossier(firm, server)
+    dossier = AdminSpec.dossier(firm, server, package: "devel")
     admin = AdminSpec.user(PartiduoAdmin::Config::FIRM_ADMIN, firm)
     old = AdminSpec.backup(dossier, SPEC_NOW - 10.days)
     AdminSpec.backup(dossier, SPEC_NOW - 1.day)
@@ -124,6 +128,8 @@ describe PartiduoAdmin::Fleet do
     task = PartiduoAdmin::Fleet.restore(admin, dossier, SPEC_NOW - 5.days, "new", "copie").value!
     task.params_json["backup_id"].as_i64.should eq(old.pk)
     PartiduoAdmin::Dossier.get!(slug: "copie").state.should eq("creating")
+    PartiduoAdmin::Dossier.get!(slug: "copie").package.should eq("devel")
+    task.params_json["package"].should eq("devel")
     finish(task, true, {"database" => "partiduo_copie", "version" => "0.1.0"})
     PartiduoAdmin::Dossier.get!(slug: "copie").state.should eq("active")
   end
@@ -179,30 +185,32 @@ describe PartiduoAdmin::Approvals do
   end
 end
 
-describe PartiduoAdmin::Waves do
-  it "monte le parc lot par lot et s'arrête au premier échec" do
+describe "PartiduoAdmin : paquet d'un dossier" do
+  it "crée un dossier servi par partiduo-app-devel et transmet le paquet à l'exécutant" do
     firm = AdminSpec.firm
     server, _ = AdminSpec.server
-    3.times { |i| AdminSpec.dossier(firm, server, slug: "vague#{i}") }
-    release = PartiduoAdmin::Release.create!(version: "0.2.0")
-    wave = PartiduoAdmin::Waves.start(AdminSpec.super_admin, release, 1).value!
-    tasks = PartiduoAdmin::Task.filter(wave_id: wave.pk).order("id").to_a
-    tasks.map(&.state).should eq(%w[pending waiting waiting])
-
-    finish(tasks[0], true, {"version" => "0.2.0"})
-    PartiduoAdmin::Dossier.get!(slug: "vague0").version.should eq("0.2.0")
-    tasks[1].reload.state.should eq("pending")
-
-    finish(tasks[1].reload, false, {"rolled_back" => true, "version" => "0.1.0"})
-    PartiduoAdmin::Dossier.get!(slug: "vague1").version.should eq("0.1.0")
-    wave.reload.state.should eq("failed")
-    tasks[2].reload.state.should eq("cancelled")
-    PartiduoAdmin::Alert.filter(kind: "wave_failed").exists?.should be_true
+    dossier = PartiduoAdmin::Fleet.create_dossier(AdminSpec.super_admin, input(firm, server, AdminSpec.payer(firm), "essai-devel",
+      package: "devel")).value!
+    dossier.package.should eq("devel")
+    dossier.package_name.should eq("partiduo-app-devel")
+    task = PartiduoAdmin::Task.get!(dossier_id: dossier.pk, kind: "instance.create")
+    task.params_json["package"].should eq("devel")
+    # Toute tâche du dossier porte son paquet.
+    PartiduoAdmin::Tasks.dossier_params(dossier)["package"].should eq("devel")
   end
 
-  it "réserve les vagues au super-admin" do
-    release = PartiduoAdmin::Release.create!(version: "0.3.0")
-    PartiduoAdmin::Waves.start(AdminSpec.user, release, 1).errors["base"].should eq(["admin.errors.forbidden"])
+  it "refuse un paquet inconnu, jamais une valeur libre" do
+    firm = AdminSpec.firm
+    server, _ = AdminSpec.server
+    payer = AdminSpec.payer(firm)
+    %w[beta ../../tmp/piege partiduo-app].each_with_index do |package, index|
+      outcome = PartiduoAdmin::Fleet.create_dossier(AdminSpec.super_admin, input(firm, server, payer, "paquet#{index}", package: package))
+      outcome.errors["package"].should eq(["admin.errors.dossier.package"])
+    end
+    PartiduoAdmin::Dossier.filter(slug__startswith: "paquet").exists?.should be_false
+    PartiduoAdmin::Protocol.valid_package?("app").should be_true
+    PartiduoAdmin::Protocol.valid_package?("devel").should be_true
+    PartiduoAdmin::Protocol.valid_package?("").should be_false
   end
 end
 

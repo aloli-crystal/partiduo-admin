@@ -27,14 +27,13 @@ private def drain(runner : PartiduoAgent::Runner) : Int32
 end
 
 describe "Exécutant contre l'administration" do
-  it "crée, sauvegarde, change les modules, archive puis monte de version avec retour arrière" do
+  it "crée une instance devel, sauvegarde, change les modules, relance un échec puis archive" do
     firm = AdminSpec.firm
     server, token = AdminSpec.server
     admin = AdminSpec.user(PartiduoAdmin::Config::FIRM_ADMIN, firm)
-    PartiduoAdmin::Release.create!(version: "0.1.0")
     input = PartiduoAdmin::Fleet::DossierInput.new(slug: "bout-en-bout", label: "Bout en bout SAS", regime: "fr",
       admin_email: "gerant@bout.fr", server_id: PartiduoAdmin.id?(server.pk), firm_id: PartiduoAdmin.id?(firm.pk),
-      payer_id: PartiduoAdmin.id?(AdminSpec.payer(firm).pk), version: "0.1.0")
+      payer_id: PartiduoAdmin.id?(AdminSpec.payer(firm).pk), package: "devel")
     dossier = PartiduoAdmin::Fleet.create_dossier(admin, input).value!
 
     with_admin_server do |url|
@@ -51,7 +50,9 @@ describe "Exécutant contre l'administration" do
       dossier.database.should eq("partiduo_adm_bout_en_bout")
       create = PartiduoAdmin::Task.get!(dossier_id: dossier.pk, kind: "instance.create")
       create.state.should eq("succeeded")
-      create.log.to_s.should contain("[à blanc] partiduo-provision")
+      create.log.to_s.should contain("[à blanc] partiduo-provision bout-en-bout partiduo_adm_bout_en_bout devel")
+      dossier.package.should eq("devel")
+      dossier.version.should eq("0.1.0")
       server.reload.agent_mode.should eq("dry-run")
       Marten::Spec.delivered_emails.flat_map(&.to).map(&.address).should contain("gerant@bout.fr")
 
@@ -61,21 +62,17 @@ describe "Exécutant contre l'administration" do
       PartiduoAdmin::Backup.get!(dossier_id: dossier.pk, kind: "manual").sha256.to_s.size.should eq(64)
       dossier.reload.modules.should eq("accounting")
 
-      # Montée de version : la migration échoue, retour arrière.
-      release = PartiduoAdmin::Release.create!(version: "0.2.0")
-      config.fail_on = "instance migrate"
-      PartiduoAdmin::Fleet.upgrade(admin, dossier, release)
+      # Sauvegarde en échec (simulé), relancée par l'admin : elle passe, et
+      # porte la version que rend l'instance.
+      config.fail_on = "tar"
+      failed = PartiduoAdmin::Fleet.backup_now(admin, dossier).value!
       drain(runner)
-      upgrade = PartiduoAdmin::Task.get!(dossier_id: dossier.pk, kind: "instance.upgrade")
-      upgrade.state.should eq("failed")
-      upgrade.result_json["rolled_back"].as_bool.should be_true
-      dossier.reload.version.should eq("0.1.0")
-      PartiduoAdmin::Backup.filter(dossier_id: dossier.pk, kind: "pre_upgrade").count.should eq(1)
-
-      # Relance par l'admin : la montée passe.
-      PartiduoAdmin::Tasks.retry(admin, upgrade).should be_true
+      failed.reload.state.should eq("failed")
+      PartiduoAdmin::Tasks.retry(admin, failed).should be_true
       drain(runner)
-      dossier.reload.version.should eq("0.2.0")
+      failed.reload.state.should eq("succeeded")
+      PartiduoAdmin::Backup.filter(dossier_id: dossier.pk, kind: "manual", state: "done").order("-id").first
+        .try(&.version).should eq("0.1.0")
 
       PartiduoAdmin::Fleet.lifecycle(admin, dossier, "archive", "cessation")
       drain(runner)

@@ -48,7 +48,7 @@ module PartiduoAdmin
         extensions: field("extensions").split(/[\s,]+/).map(&.strip.downcase).reject(&.empty?),
         admin_email: field("admin_email"), server_id: field("server_id").to_i64?,
         firm_id: user.firm_admin? ? PartiduoAdmin.id?(user.firm_id) : field("firm_id").to_i64?, payer_id: field("payer_id").to_i64?,
-        version: field("version"), backup_schedule: field("backup_schedule").presence || "daily",
+        package: field("package").presence || "app", backup_schedule: field("backup_schedule").presence || "daily",
         backup_retention_days: field("backup_retention_days").to_i? || 0)
       outcome = Fleet.create_dossier(user, input)
       if outcome.ok?
@@ -64,8 +64,7 @@ module PartiduoAdmin
       firms = Access.firms(user).filter(active: true).order("name").map { |firm| opt.call(firm.pk.to_s, firm.name.to_s, input.firm_id.to_s) }
       payers = Access.payers(user).order("name").map { |payer| opt.call(payer.pk.to_s, "#{payer.name} (#{payer.firm_name})", input.payer_id.to_s) }
       servers = Server.filter(active: true).order("name").map { |server| opt.call(server.pk.to_s, "#{server.name} — #{server.domain}", input.server_id.to_s) }
-      releases = [opt.call("", I18n.t("admin.releases.default"), input.version)] +
-                 Release.all.order("-created_at").map { |release| opt.call(release.version.to_s, release.version.to_s, input.version) }
+      packages = Dossier::PACKAGES.map { |code| opt.call(code, I18n.t("admin.packages.#{code}"), input.package) }
       modules = Protocol::MODULES.map { |code| FormField::Option.new(code, I18n.t("admin.modules.#{code}"), input.modules.includes?(code)) }
       fields = [
         FormField.new("slug", I18n.t("admin.dossiers.fields.slug"), input.slug, errors: errs(t, "slug"), required: true,
@@ -93,7 +92,8 @@ module PartiduoAdmin
       fields << FormField.new("payer_id", I18n.t("admin.dossiers.fields.payer"), input.payer_id.to_s, "select",
         [opt.call("", I18n.t("admin.choose"), "x")] + payers, errs(t, "payer_id"), required: true,
         help: I18n.t("admin.dossiers.help.payer"))
-      fields << FormField.new("version", I18n.t("admin.dossiers.fields.version"), input.version, "select", releases)
+      fields << FormField.new("package", I18n.t("admin.dossiers.fields.package"), input.package, "select", packages,
+        errs(t, "package"), required: true, help: I18n.t("admin.dossiers.help.package"))
       fields << FormField.new("backup_schedule", I18n.t("admin.dossiers.fields.backup_schedule"), input.backup_schedule, "select",
         Dossier::SCHEDULES.map { |code| opt.call(code, I18n.t("admin.schedules.#{code}"), input.backup_schedule) })
       fields << FormField.new("backup_retention_days", I18n.t("admin.dossiers.fields.backup_retention_days"),
@@ -115,7 +115,6 @@ module PartiduoAdmin
         "tasks"            => Task.filter(dossier_id: dossier.pk).order("-id").to_a.first(20),
         "approvals"        => Approval.filter(dossier_id: dossier.pk).order("-id").to_a.first(10),
         "alerts"           => Alert.filter(dossier_id: dossier.pk, resolved_at__isnull: true).to_a,
-        "releases"         => Release.all.order("-created_at").exclude(version: dossier.version).to_a,
         "managers"         => managers.map { |manager| {"id" => manager.pk.to_s, "email" => manager.email.to_s, "assigned" => assigned.includes?(manager.pk)} },
         "can"              => flags(dossier),
         "encryption_modes" => encryption_modes(dossier),
@@ -148,7 +147,6 @@ module PartiduoAdmin
         "archive"         => Access.can?(user, :archive, dossier) && %w[active suspended].includes?(dossier.state),
         "restore_archive" => Access.can?(user, :restore_archive, dossier) && dossier.state == "archived",
         "restore"         => Access.can?(user, :restore, dossier) && %w[active suspended].includes?(dossier.state),
-        "upgrade"         => Access.can?(user, :upgrade, dossier) && dossier.state == "active",
         "delete"          => Access.can?(user, :request_delete, dossier) && dossier.state == "archived",
         "access"          => Access.can?(user, :request_admin_invite, dossier) && dossier.state == "active",
         "assign"          => !user.file_manager?,
@@ -190,18 +188,14 @@ module PartiduoAdmin
   end
 
   # Actions sans formulaire : suspendre, réactiver, archiver, restaurer
-  # l'archive, sauvegarder, monter de version.
+  # l'archive, sauvegarder.
   class DossierActionHandler < ScreenHandler
     def post
       dossier = dossier!
       action = params["action"].to_s
       outcome = case action
                 when "backup" then Fleet.backup_now(user, dossier)
-                when "upgrade"
-                  release = Release.filter(id: field("release_id").to_i64? || 0_i64).first
-                  release ? Fleet.upgrade(user, dossier, release) : Fleet::Outcome(Task).failure("release_id", "admin.errors.required")
-                else
-                  Fleet.lifecycle(user, dossier, action, field("reason"))
+                else               Fleet.lifecycle(user, dossier, action, field("reason"))
                 end
       if outcome.ok?
         flash["success"] = I18n.t("admin.tasks.enqueued")

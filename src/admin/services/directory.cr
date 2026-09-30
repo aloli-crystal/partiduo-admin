@@ -4,7 +4,7 @@ require "csv"
 
 module PartiduoAdmin
   # Référentiels de l'administration : cabinets, utilisateurs et
-  # affectations, donneurs d'ordre, serveurs, versions.
+  # affectations, donneurs d'ordre, serveurs.
   module Directory
     alias Outcome = Fleet::Outcome
     alias Errors = Fleet::Errors
@@ -216,7 +216,7 @@ module PartiduoAdmin
       FORMULA_LEADS.includes?(cell[0]?) ? "'#{cell}" : cell
     end
 
-    # --- Serveurs et versions ------------------------------------------------
+    # --- Serveurs ------------------------------------------------------------
 
     # Crée un serveur ; le jeton de l'exécutant est rendu une seule fois.
     def self.create_server(actor : User, name : String, hostname : String, domain : String) : Outcome({Server, String})
@@ -245,16 +245,6 @@ module PartiduoAdmin
     def self.server_for_token(token : String?) : Server?
       return if token.nil? || token.empty?
       Server.filter(token_digest: Secrets.digest(token), active: true).first
-    end
-
-    def self.create_release(actor : User, version : String, notes : String, default : Bool) : Outcome(Release)
-      return Outcome(Release).failure("base", "admin.errors.forbidden") unless Access.fleet?(actor)
-      return Outcome(Release).failure("version", "admin.errors.invalid") unless Protocol.valid_version?(version)
-      return Outcome(Release).failure("version", "admin.errors.release.taken") if Release.filter(version: version).exists?
-      Release.filter(is_default: true).update(is_default: false) if default
-      release = Release.create!(version: version, notes: notes.strip, is_default: default)
-      Audit.log(actor, "release.create", target: release)
-      Outcome(Release).new(release)
     end
   end
 end

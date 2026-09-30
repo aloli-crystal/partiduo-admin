@@ -41,6 +41,9 @@ fr:
       daily: "quotidienne"
       weekly: "hebdomadaire"
       none: "aucune"
+    packages:
+      app: "partiduo-app (production)"
+      devel: "partiduo-app-devel (développement)"
     modules:
       accounting: "Comptabilité"
       invoicing: "Facturation"
@@ -139,6 +142,7 @@ fr:
         server: "Serveur"
         firm: "Structure gestionnaire"
         payer: "Donneur d'ordre"
+        package: "Paquet"
         version: "Version"
         state: "État"
         host: "Adresse"
@@ -151,6 +155,7 @@ fr:
         extensions: "Codes séparés par des virgules (einvoicing, superpdp…)."
         admin_email: "Reçoit l'invitation d'administrateur du dossier."
         payer: "Celui qui commande et paie le dossier : obligatoire."
+        package: "Paquet FreeBSD qui servira le dossier ; sa mise à jour est faite sur tous les serveurs par beryl, et le dossier se migre à son démarrage."
         modules_kept: "Désactiver un module conserve ses données, en lecture seule."
       states:
         creating: "en création"
@@ -182,8 +187,6 @@ fr:
       archive_help: "Sauvegarde figée et vérifiée, instance arrêtée, archive conservée dix ans."
       restore_archive: "Restaurer l'archive"
       restore: "Restaurer à une date"
-      upgrade: "Monter de version"
-      upgrade_help: "Sauvegarde préalable automatique ; retour arrière si la migration échoue."
       delete: "Suppression définitive"
       delete_help: "Possible seulement après la durée légale de conservation, validée par une ou deux personnes selon le réglage de la structure."
       access: "Recours d'accès"
@@ -208,7 +211,6 @@ fr:
       kinds:
         scheduled: "planifiée"
         manual: "manuelle"
-        pre_upgrade: "avant montée de version"
         pre_restore: "avant restauration"
         archive: "archive"
       states:
@@ -397,7 +399,6 @@ fr:
       cancel: "Annuler"
       enqueued: "Tâche en file d'attente."
       states:
-        waiting: "retenue"
         pending: "en attente"
         running: "en cours"
         succeeded: "réussie"
@@ -411,7 +412,6 @@ fr:
         instance_archive: "archivage"
         instance_restore_archive: "restauration de l'archive"
         instance_delete: "suppression définitive"
-        instance_upgrade: "montée de version"
         instance_admin_invite: "recours d'accès"
         backup_run: "sauvegarde"
         backup_prune: "élagage des sauvegardes"
@@ -434,7 +434,6 @@ fr:
         le_quota: "quota Let's Encrypt"
         agent_silent: "exécutant silencieux"
         test_restore_failed: "restauration test échouée"
-        wave_failed: "vague de montée de version arrêtée"
         mail_failed: "courriel d'invitation non envoyé"
     quota:
       title: "Quota Let's Encrypt"
@@ -515,26 +514,6 @@ fr:
       token_title: "Jeton de l'exécutant"
       token_once: "Ce jeton ne sera plus affiché. Copiez-le dans le fichier de jeton de partiduo-agent sur le serveur."
       token_help: "L'exécutant le présente à chaque appel (Authorization: Bearer). Un nouveau jeton annule le précédent."
-    releases:
-      title: "Versions"
-      new: "Nouvelle version"
-      version: "Version"
-      notes: "Notes"
-      is_default: "Par défaut pour les nouveaux dossiers"
-      default: "Version par défaut"
-      none: "Aucune autre version publiée."
-    waves:
-      title: "Vagues de montée de version"
-      start: "Lancer une vague"
-      started: "Vague lancée."
-      batch_size: "Dossiers par lot"
-      none: "Aucune vague."
-      help: "Les dossiers actifs sont montés lot par lot, chacun avec sauvegarde préalable ; la vague s'arrête au premier échec."
-      states:
-        running: "en cours"
-        done: "terminée"
-        failed: "arrêtée sur échec"
-        cancelled: "annulée"
     audit:
       title: "Journal d'audit"
       none: "Aucune entrée."
@@ -597,6 +576,7 @@ fr:
         locale: "Langue inconnue."
         modules: "Choisissez au moins un module parmi les modules officiels."
         extensions: "Code d'extension invalide."
+        package: "Paquet inconnu : partiduo-app ou partiduo-app-devel."
         payer_required: "Le donneur d'ordre est obligatoire."
         payer_scope: "Ce donneur d'ordre relève d'un autre cabinet."
         quota: "Quota Let's Encrypt du domaine atteint (50 certificats par semaine) : création impossible pour l'instant."
@@ -624,11 +604,6 @@ fr:
         public_key: "Clé publique refusée : PEM « PUBLIC KEY », RSA de 3072 bits au moins."
         key_required: "Cette sauvegarde est chiffrée par la clé du cabinet : fournissez la clé du cabinet."
         wrong_key: "Cette clé ne déchiffre pas la sauvegarde."
-      release:
-        same: "Le dossier est déjà dans cette version."
-        taken: "Cette version existe déjà."
-      wave:
-        nothing: "Aucun dossier actif à monter vers cette version."
       task:
         state: "Action impossible dans l'état de la tâche."
       user:

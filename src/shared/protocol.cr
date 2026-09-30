@@ -10,8 +10,11 @@ module PartiduoAdmin
     # incrémente la mineure (1.1.0 : chiffrement des sauvegardes — clés
     # `encryption`, `backup_encryption`, `media_sha256`, `key_provided` des
     # paramètres, `secrets.data_keys` de la tâche réclamée, D-CHF-010 ;
-    # 1.2.0 : `approval_mode` des opérations sensibles, D-VAL2-005).
-    API_VERSION = "1.2.0"
+    # 1.2.0 : `approval_mode` des opérations sensibles, D-VAL2-005 ;
+    # 2.0.0 : type `instance.upgrade` et état `waiting` retirés, paramètre
+    # `version` remplacé par `package` — la mise à jour des paquets relève
+    # de beryl, chaque instance se migre à son démarrage).
+    API_VERSION = "2.0.0"
 
     # Mode de validation d'une opération sensible (`instance.delete`,
     # `instance.admin_invite`) : `single`, une personne qui a confirmé seule
@@ -38,7 +41,6 @@ module PartiduoAdmin
       instance.archive
       instance.restore_archive
       instance.delete
-      instance.upgrade
       instance.admin_invite
       backup.run
       backup.prune
@@ -47,10 +49,8 @@ module PartiduoAdmin
       supervision.check
     ]
 
-    # États d'une tâche : en attente, en cours, réussie, échouée, annulée ;
-    # `waiting` : tâche d'une vague retenue jusqu'à la fin du lot précédent
-    # (jamais remise à l'exécutant).
-    STATES = %w[waiting pending running succeeded failed cancelled]
+    # États d'une tâche : en attente, en cours, réussie, échouée, annulée.
+    STATES = %w[pending running succeeded failed cancelled]
 
     # Durée pendant laquelle une tâche réclamée reste à l'exécutant qui l'a
     # prise ; chaque compte rendu la prolonge. Échue, la tâche est reprise
@@ -84,9 +84,10 @@ module PartiduoAdmin
     # Code d'extension (ADR-003) : même règle que `partiduo-provision`.
     CODE = /\A[a-z][a-z0-9_]*\z/
 
-    # Version publiée de partiduo-app (`0.2.0`, `0.2.0-rc.1`) : elle nomme un
-    # répertoire de `releases_dir`, jamais un chemin (ni `/` ni `..`).
-    VERSION = /\A\d+\.\d+\.\d+(?:[-.][0-9A-Za-z]+)*\z/
+    # Paquet FreeBSD qui sert une instance : `app` (`partiduo-app`) ou
+    # `devel` (`partiduo-app-devel`) ; les deux cohabitent sur un serveur.
+    # Liste fermée : la valeur choisit un paquet, jamais un chemin.
+    PACKAGES = %w[app devel]
 
     # Domaine des dossiers d'un serveur : même règle que `partiduo-provision`.
     DOMAIN = /\A[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+\z/
@@ -95,8 +96,8 @@ module PartiduoAdmin
       DOMAIN.matches?(domain)
     end
 
-    def self.valid_version?(version : String) : Bool
-      VERSION.matches?(version)
+    def self.valid_package?(package : String) : Bool
+      PACKAGES.includes?(package)
     end
 
     def self.valid_kind?(kind : String) : Bool

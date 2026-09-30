@@ -108,37 +108,4 @@ module PartiduoAdmin
       page("admin/server_token.html", {"server" => server, "token" => token})
     end
   end
-
-  class ReleasesHandler < ScreenHandler
-    def get
-      require_fleet!
-      page("admin/releases.html", {"releases" => Release.all.order("-created_at").to_a,
-                                   "waves"    => Wave.all.order("-id").to_a.first(20)})
-    end
-
-    def post
-      require_fleet!
-      outcome = Directory.create_release(user, field("version"), field("notes"), field("is_default") == "1")
-      if outcome.ok?
-        flash["success"] = I18n.t("admin.saved")
-      else
-        flash["danger"] = outcome.errors.values.flatten.map { |key| I18n.t(key) }.join(" ")
-      end
-      redirect("/releases")
-    end
-  end
-
-  class WaveStartHandler < ScreenHandler
-    def post
-      require_fleet!
-      release = Release.get!(id: field("release_id").to_i64? || 0_i64)
-      outcome = Waves.start(user, release, field("batch_size").to_i? || 0)
-      if outcome.ok?
-        flash["success"] = I18n.t("admin.waves.started")
-      else
-        flash["danger"] = outcome.errors.values.flatten.map { |key| I18n.t(key) }.join(" ")
-      end
-      redirect("/releases")
-    end
-  end
 end

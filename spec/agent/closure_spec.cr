@@ -4,7 +4,7 @@ require "../spec_helper"
 
 # Clôture du lot A (relecture) : privilèges du mode production (enveloppes
 # de sudo, argv produits), paramètres de tâche recalculés depuis le
-# sous-domaine, montée de version et restaurations, supervision robuste.
+# sous-domaine, paquet et restaurations, supervision robuste.
 
 private APP_ROOT = File.expand_path("../..", __DIR__)
 
@@ -18,19 +18,6 @@ private class RecordingProduction < PartiduoAgent::ProductionSystem
   end
 end
 
-# À blanc, mais une étape lève une exception qui n'est pas une `StepError`.
-private class ExplodingSystem < PartiduoAgent::DrySystem
-  @exploded = false
-
-  def service(slug : String, command : String) : String
-    if command == "start" && !@exploded
-      @exploded = true
-      raise KeyError.new("clé absente de la réponse")
-    end
-    super
-  end
-end
-
 private def production(domain = "partiduo.app") : RecordingProduction
   config = PartiduoAgent::Config.new
   config.mode = PartiduoAgent::Mode::Production
@@ -41,7 +28,7 @@ end
 private def params(slug = "garde", **extra) : Hash(String, JSON::Any)
   base = JSON.parse({"slug" => slug, "host" => "#{slug}.partiduo.localhost", "domain" => "partiduo.localhost",
                      "database" => "", "modules" => ["accounting", "invoicing"], "extensions" => [] of String,
-                     "version" => "0.1.0"}.to_json).as_h
+                     "package" => "app"}.to_json).as_h
   extra.each { |key, value| base[key.to_s] = JSON.parse(value.to_json) }
   base
 end
@@ -86,7 +73,12 @@ describe "partiduo-agent : mode production (D-AFN-002, D-AFN-005)" do
                                  "cli", "garde", "partiduo_rt_garde_5", "-", "status", "--task", "1"])
     system.argvs.flatten.none? { |arg| arg == "sh" || arg == "-c" || arg.includes?("DATABASE_URL") }.should be_true
 
-    expect_raises(PartiduoAgent::StepError, /version invalide/) { system.instance("garde", "status", [] of String, "../../x") }
+    expect_raises(PartiduoAgent::StepError, /paquet invalide/) { system.instance("garde", "status", [] of String, "../../x") }
+    expect_raises(PartiduoAgent::StepError, /paquet invalide/) { system.instance("garde", "status", [] of String, "0.2.0") }
+    # Instance pas encore déclarée : le paquet est passé à l'enveloppe.
+    system.instance("garde", "version", ["--task", "2"], "devel")
+    system.argvs.last.should eq(["sudo", "-n", "-u", "partiduo", "/usr/local/libexec/partiduo-agent/partiduo-agent-instance",
+                                 "cli", "garde", "-", "devel", "version", "--task", "2"])
     expect_raises(PartiduoAgent::StepError, /sous-domaine/) { system.instance("garde;x", "status", [] of String) }
   end
 
@@ -100,7 +92,8 @@ describe "partiduo-agent : mode production (D-AFN-002, D-AFN-005)" do
     argv[0, 7].should eq(instance_helper + ["provision", "garde"])
     argv.should contain("--name")
     argv.should contain("Garde SAS")
-    argv.should contain("--release")
+    argv.each_cons_pair.to_a.should contain({"--package", "app"})
+    argv.should_not contain("--release")
     # Rôle propriétaire, racines, socket et gabarits : fixés par l'enveloppe.
     %w[--manage --owner --output-dir --install-root --etc-dir --database].each { |option| argv.should_not contain(option) }
     expect_raises(PartiduoAgent::StepError, /base refusée/) do
@@ -120,8 +113,13 @@ describe "partiduo-agent : mode production (D-AFN-002, D-AFN-005)" do
     system.mkdir(system.backup_root("garde"))
     system.argvs.last.should eq(instance_helper + ["backup-dir", "garde"])
     expect_raises(PartiduoAgent::StepError, /refusé/) { system.mkdir("/etc") }
-    system.switch_release("garde", "0.2.0")
-    system.argvs.last.should eq(instance_helper + ["release", "garde", "0.2.0"])
+    # Paquet de l'instance neuve d'une restauration ; valeur libre refusée.
+    system.provision_files("garde", "partiduo.app", JSON.parse(params(package: "devel").to_json), "partiduo_garde")
+    system.argvs.last.each_cons_pair.to_a.should contain({"--package", "devel"})
+    expect_raises(PartiduoAgent::StepError, /paquet invalide/) do
+      system.provision("garde", "partiduo.app", JSON.parse(params(package: "../x").to_json), "partiduo_garde", skip_createdb: false)
+    end
+    system.argvs.flatten.none?(&.==("release")).should be_true
   end
 
   it "ne passe à root que des sous-domaines, par l'enveloppe racine" do
@@ -179,37 +177,24 @@ describe "partiduo-agent : paramètres recalculés depuis le sous-domaine (D-AFN
   end
 end
 
-describe "partiduo-agent : montée de version et restaurations" do
-  it "arrête le service avant la sauvegarde préalable" do
+describe "partiduo-agent : paquet et restaurations" do
+  it "refuse une tâche dont le paquet n'est ni app ni devel, avant tout geste" do
     with_admin do |admin|
-      report, dry = run_dry(admin, 70_i64, "instance.upgrade", params(version: "0.2.0", from_version: "0.1.0"),
-        databases: ["partiduo_adm_garde"])
-      report["ok"].as_bool.should be_true
-      dry.calls.index!("service stop garde").should be < dry.calls.index!(&.starts_with?("pg_dump"))
+      report, dry = run_dry(admin, 70_i64, "instance.create", params(package: "../../tmp/piege"))
+      report["ok"].as_bool.should be_false
+      report["error"].as_s.should contain("paquet invalide")
+      dry.calls.should be_empty
     end
   end
 
-  it "revient en arrière sur toute exception, même hors StepError" do
-    dir = File.join(Dir.tempdir, "partiduo-agent-closure-#{Random::Secure.hex(4)}")
-    config = PartiduoAgent::Config.new
-    config.state_dir = dir
-    config.backup_dir = File.join(dir, "backups")
-    system = ExplodingSystem.new(config, ->(_line : String) { nil })
-    system.databases << "partiduo_adm_garde"
-    system.provisioned << "partiduo_adm_garde"
-    system.releases["garde"] = "0.1.0"
-    task = PartiduoAgent::TaskInfo.new(71_i64, "instance.upgrade", 1, "garde",
-      JSON.parse(params(version: "0.2.0", from_version: "0.1.0").to_json), "spec@example.com")
-    ctx = PartiduoAgent::Context.new(task, system, PartiduoAgent::Journal.new(File.join(dir, "tasks"), 71_i64))
-    expect_raises(PartiduoAgent::StepError, /retour à 0.1.0/) { PartiduoAgent::Plans.run(ctx) }
-    ctx.result["rolled_back"].as_bool.should be_true
-    system.releases["garde"].should eq("0.1.0")
-    # Migrations passées : base rendue à la sauvegarde préalable, service relancé.
-    system.calls.should contain("dropdb partiduo_adm_garde")
-    system.calls.any?(&.starts_with?("pg_restore")).should be_true
-    system.stopped.includes?("garde").should be_false
-  ensure
-    FileUtils.rm_rf(dir) if dir
+  it "rend avec une sauvegarde la version que rend l'instance" do
+    with_admin do |admin|
+      report, dry = run_dry(admin, 71_i64, "backup.run", params(kind: "manual"), databases: ["partiduo_adm_garde"])
+      report["ok"].as_bool.should be_true
+      # Version de la sauvegarde : celle que rend l'instance, sans lien de version.
+      report["result"]["version"].should eq(dry.version)
+      dry.calls.none?(&.starts_with?("release")).should be_true
+    end
   end
 
   it "relève les pièces jointes avant et après pg_dump et archive leur union (D-AFN-012)" do
@@ -233,7 +218,8 @@ describe "partiduo-agent : montée de version et restaurations" do
       task_params = params(path: path, media_path: media, target: "new", new_slug: "copie", new_host: "copie.partiduo.localhost")
       report, dry = run_dry(admin, 73_i64, "backup.restore", task_params, config)
       report["ok"].as_bool.should be_true
-      dry.calls.should contain("partiduo-provision --files-only copie partiduo_adm_copie")
+      dry.calls.should contain("partiduo-provision --files-only copie partiduo_adm_copie app")
+      dry.packages["copie"].should eq("app")
       dry.calls.should contain("install copie.partiduo.localhost")
       dry.calls.should contain("tar -x #{media} copie")
       report["result"]["database"].should eq("partiduo_adm_copie")

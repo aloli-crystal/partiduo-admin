@@ -3,7 +3,7 @@
 require "../spec_helper"
 
 # Exécutant `partiduo-agent` : garde-fous et cas limites (ADR-008 D4) —
-# contrat d'instance, versions et chemins refusés, bases protégées, ordre
+# contrat d'instance, paquets et chemins refusés, bases protégées, ordre
 # des gestes, reprise, configuration.
 
 private def run_task(admin : AdminSpec::FakeAdmin, config : PartiduoAgent::Config, id : Int64, kind : String,
@@ -21,7 +21,7 @@ end
 
 private def base_params(slug = "garde")
   {"slug" => slug, "host" => "#{slug}.partiduo.localhost", "domain" => "partiduo.localhost", "database" => "",
-   "modules" => ["accounting", "invoicing"], "extensions" => [] of String, "version" => "0.1.0"}
+   "modules" => ["accounting", "invoicing"], "extensions" => [] of String, "package" => "app"}
 end
 
 private def dry_calls(runner : PartiduoAgent::Runner) : Array(String)
@@ -54,19 +54,37 @@ describe "partiduo-agent : garde-fous" do
     end
   end
 
-  it "refuse une version qui serait un chemin, avant tout geste" do
+  it "refuse un paquet qui serait un chemin, avant tout geste" do
     with_admin do |admin|
-      create = base_params("chemin").merge({"version" => "../../../tmp/piege", "name" => "X", "regime" => "fr", "locale" => "fr",
+      create = base_params("chemin").merge({"package" => "../../../tmp/piege", "name" => "X", "regime" => "fr", "locale" => "fr",
                                             "admin_email" => "a@b.fr", "siren" => "", "vat" => ""})
       report, runner = run_task(admin, admin.config, 31_i64, "instance.create", create)
       report["ok"].as_bool.should be_false
-      report["error"].as_s.should contain("version invalide")
+      report["error"].as_s.should contain("paquet invalide")
       dry_calls(runner).should be_empty
+    end
+  end
 
-      upgrade = base_params("chemin").merge({"version" => "0.2.0/../../x", "from_version" => "0.1.0"})
-      report, runner = run_task(admin, admin.config, 32_i64, "instance.upgrade", upgrade)
+  it "mode local : interroge une instance devel avec l'outil du paquet devel" do
+    with_admin do |admin|
+      config = admin.config(PartiduoAgent::Mode::Local)
+      Dir.mkdir_p(config.state_dir)
+      app = File.join(config.state_dir, "manage-app")
+      devel = File.join(config.state_dir, "manage-devel")
+      File.write(app, "#!/bin/sh\necho '{\"contract\":\"1.1.0\",\"action\":\"version\",\"ok\":true,\"data\":{\"contract\":\"1.1.0\"}}'\n", perm: 0o755)
+      File.write(devel, "#!/bin/sh\necho '{\"contract\":\"2.0.0\",\"action\":\"version\",\"ok\":true,\"data\":{\"contract\":\"2.0.0\"}}'\n", perm: 0o755)
+      config.manage = app
+      config.manage_devel = devel
+      local = PartiduoAgent::LocalSystem.new(config, ->(_line : String) { nil })
+      local.manage_for("app").should eq([app])
+      local.manage_for("devel").should eq([devel])
+      local.declared_package("garde").should be_nil
+      local.declare_package("garde", "devel")
+      local.declared_package("garde").should eq("devel")
+      # Le contrat 2.0.0 de l'outil devel est refusé : c'est bien lui qui répond.
+      report, _ = run_task(admin, config, 32_i64, "instance.modules", base_params.merge({"enable" => ["analytic"], "disable" => [] of String}))
       report["ok"].as_bool.should be_false
-      dry_calls(runner).none?(&.starts_with?("release")).should be_true
+      report["error"].as_s.should contain("contrat d'instance")
     end
   end
 
@@ -143,28 +161,6 @@ describe "partiduo-agent : garde-fous" do
       calls.index!(&.starts_with?("dropdb")).should be < calls.index!(&.starts_with?("rm"))
       calls.count(&.starts_with?("rm")).should eq(2)
       admin.logs[40_i64].join("\n").should contain("DV-AAAA-BBBB")
-    end
-  end
-
-  it "ne restaure pas la base quand la montée échoue avant la bascule" do
-    with_admin do |admin|
-      config = admin.config
-      config.fail_on = "service stop"
-      report, runner = run_task(admin, config, 41_i64, "instance.upgrade", base_params.merge({"version" => "0.2.0", "from_version" => "0.1.0"}))
-      report["ok"].as_bool.should be_false
-      report["result"]["rolled_back"].as_bool.should be_true
-      calls = dry_calls(runner)
-      calls.any?(&.starts_with?("pg_restore")).should be_false
-      calls.any?(&.starts_with?("dropdb")).should be_false
-      calls.last.should eq("service start garde")
-    end
-  end
-
-  it "refuse une montée sans version cible" do
-    with_admin do |admin|
-      report, _ = run_task(admin, admin.config, 42_i64, "instance.upgrade", base_params.merge({"version" => ""}))
-      report["ok"].as_bool.should be_false
-      report["error"].as_s.should contain("version cible manquante")
     end
   end
 end

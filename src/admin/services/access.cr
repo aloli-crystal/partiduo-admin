@@ -10,13 +10,13 @@ module PartiduoAdmin
   # |voir un dossier, ses tâches et sauvegardes |tous |son cabinet |confiés
   # |modules et extensions, sauvegarde, restauration test |tous |son cabinet |confiés
   # |demander un recours d'accès |tous |son cabinet |confiés
-  # |créer, suspendre, réactiver, archiver, restaurer, monter de version |tous |son cabinet |—
+  # |créer, suspendre, réactiver, archiver, restaurer |tous |son cabinet |—
   # |demander une suppression définitive |tous |son cabinet |—
   # |valider une demande d'un autre (validation à deux) |tous |son cabinet |—
   # |confirmer seul sa demande (structure « une personne ») |tous |son cabinet |—
   # |régler la validation à deux |parc sans cabinet |sa structure |—
   # |utilisateurs, affectations, donneurs d'ordre |tous |son cabinet |—
-  # |cabinets, serveurs, versions, vagues |oui |— |—
+  # |cabinets, serveurs |oui |— |—
   # |journal d'audit |tout |son cabinet |—
   # |===
   module Access
@@ -27,7 +27,7 @@ module PartiduoAdmin
     MANAGER_ACTIONS = %i[view modules backup test_restore request_admin_invite]
 
     # Actions sur un dossier réservées aux admins (cabinet ou parc).
-    ADMIN_ACTIONS = %i[suspend resume archive restore_archive restore upgrade request_delete approve]
+    ADMIN_ACTIONS = %i[suspend resume archive restore_archive restore request_delete approve]
 
     def self.dossiers(user : User) : Marten::DB::Query::Set(Dossier)
       case user.role

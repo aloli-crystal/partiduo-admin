@@ -70,6 +70,16 @@ module PartiduoAgent
       File.join(config.backup_dir, slug)
     end
 
+    # Paquet porté par les paramètres d'une tâche : `app` s'il est absent ;
+    # toute autre valeur que `app` ou `devel` est refusée (elle choisit un
+    # paquet, jamais un chemin).
+    def self.package_of(params : JSON::Any) : String
+      value = params["package"]?.try(&.as_s?) || ""
+      return "app" if value.empty?
+      raise StepError.new("paquet invalide : #{value}", "usage") unless PartiduoAdmin::Protocol.valid_package?(value)
+      value
+    end
+
     abstract def database_exists?(database : String) : Bool
     abstract def createdb(database : String) : Nil
     abstract def dropdb(database : String) : Nil
@@ -79,11 +89,13 @@ module PartiduoAgent
     # --files-only`, nouveau port et nouvelle clé secrète.
     abstract def provision_files(slug : String, domain : String, params : JSON::Any, database : String) : String
     abstract def install_instance(slug : String, host : String) : Bool
-    abstract def instance(slug : String, action : String, args : Array(String), version : String? = nil,
+    # Interface en ligne de commande d'une instance. `package` (`app` ou
+    # `devel`) : paquet dont l'outil `manage` est pris, seulement pour une
+    # instance pas encore déclarée (création, instance neuve d'une
+    # restauration) ; `nil` : celui qui sert déjà l'instance.
+    abstract def instance(slug : String, action : String, args : Array(String), package : String? = nil,
                           database : String? = nil) : InstanceReply
     abstract def service(slug : String, command : String) : String
-    abstract def switch_release(slug : String, version : String) : Nil
-    abstract def current_release(slug : String) : String?
     abstract def pg_dump(database : String, path : String) : Nil
     abstract def pg_restore(database : String, path : String) : Nil
     abstract def pg_restore_list?(path : String) : Bool
@@ -237,13 +249,16 @@ module PartiduoAgent
     getter provisioned = Set(String).new
     getter stopped = Set(String).new
     getter files = {} of String => Int64
-    getter releases = {} of String => String
+    # Paquet de chaque instance simulée (sous-domaine → `app` ou `devel`).
+    getter packages = {} of String => String
     getter read_only = Set(String).new
     getter calls = [] of String
     # Version du contrat que simule l'instance (`version`, `status`, toute
     # réponse) : la version courante de partiduo-app, ou une plus ancienne
     # pour éprouver un repli.
     property contract = "1.1.0"
+    # Version (semver) que rend l'instance simulée.
+    property version = "0.1.0"
 
     private def op(name : String, detail : String) : Nil
       calls << "#{name} #{detail}"
@@ -269,15 +284,18 @@ module PartiduoAgent
     end
 
     def provision(slug : String, domain : String, params : JSON::Any, database : String, skip_createdb : Bool) : String
-      op("partiduo-provision", "#{slug} #{database}")
+      package = System.package_of(params)
+      op("partiduo-provision", "#{slug} #{database} #{package}")
       databases << database
       provisioned << database
-      releases[slug] = params["version"]?.try(&.as_s?).presence || "0.1.0"
+      packages[slug] = package
       "== Instance #{slug} provisionnée.\nInvitation : https://#{slug}.#{domain}/invitation/DRYRUNTOKEN\n"
     end
 
     def provision_files(slug : String, domain : String, params : JSON::Any, database : String) : String
-      op("partiduo-provision --files-only", "#{slug} #{database}")
+      package = System.package_of(params)
+      op("partiduo-provision --files-only", "#{slug} #{database} #{package}")
+      packages[slug] = package
       "== Instance #{slug} provisionnée.\n"
     end
 
@@ -286,14 +304,17 @@ module PartiduoAgent
       false
     end
 
-    def instance(slug : String, action : String, args : Array(String), version : String? = nil,
+    def instance(slug : String, action : String, args : Array(String), package : String? = nil,
                  database : String? = nil) : InstanceReply
+      if package && !PartiduoAdmin::Protocol.valid_package?(package)
+        raise StepError.new("paquet invalide : #{package}", "usage")
+      end
       op("instance #{action}", ([slug] + args.reject(&.starts_with?("--requested-by"))).join(' '))
       db = database || database_for(slug)
       if action == "status" && !databases.includes?(db)
         return InstanceReply.new(6, JSON.parse(%({"ok":false,"error":{"code":"database_unavailable","reason":"database.unavailable","message":"base injoignable"}})))
       end
-      data = dry_data(slug, action, args, db, version || releases[slug]? || "0.1.0")
+      data = dry_data(slug, action, args, db, version)
       InstanceReply.new(0, JSON.parse({"contract" => contract, "action" => action, "ok" => true, "data" => data}.to_json))
     end
 
@@ -314,8 +335,7 @@ module PartiduoAgent
         {"email" => args.first? || "", "user_created" => false, "url" => "https://dry-run/invitation/DRYRUN",
          "expires_at" => "2026-10-05T00:00:00Z", "usable_admins" => 0,
          "approval_mode" => args.index("--approval-mode").try { |index| args[index + 1]? } || "dual"}
-      when "migrate" then {"applied" => [] of String, "pending" => 0}
-      else                {"code" => args.first? || "", "active" => action == "enable", "data" => "kept"}
+      else {"code" => args.first? || "", "active" => action == "enable", "data" => "kept"}
       end
     end
 
@@ -326,15 +346,6 @@ module PartiduoAgent
       when "start" then stopped.delete(slug)
       end
       stopped.includes?(slug) ? "stopped" : "running"
-    end
-
-    def switch_release(slug : String, version : String) : Nil
-      op("release", "#{slug} #{version}")
-      releases[slug] = version
-    end
-
-    def current_release(slug : String) : String?
-      releases[slug]?
     end
 
     def pg_dump(database : String, path : String) : Nil
@@ -531,23 +542,31 @@ module PartiduoAgent
 
     def provision(slug : String, domain : String, params : JSON::Any, database : String, skip_createdb : Bool) : String
       guard_database!(database)
-      argv = [config.provision, "--manage", config.manage, "--domain", domain, "--database", database,
-              "--pg-socket", config.pg_socket, "--output-dir", instances_dir] + company_options(params) + module_options(params)
+      package = System.package_of(params)
+      argv = provision_for(package) + ["--manage", manage_for(package).join(' '), "--domain", domain, "--database", database,
+                                       "--pg-socket", config.pg_socket, "--output-dir", instances_dir] +
+             company_options(params) + module_options(params)
       argv += ["--acme-email", config.acme_email] unless config.acme_email.empty?
       argv << "--acme-staging" if config.acme_staging
       argv << "--skip-createdb" if skip_createdb
       argv << slug
       Dir.mkdir_p(instances_dir)
-      run!(argv, pg_env)
+      output = run!(argv, pg_env)
+      declare_package(slug, package)
+      output
     end
 
     def provision_files(slug : String, domain : String, params : JSON::Any, database : String) : String
       guard_database!(database)
-      argv = [config.provision, "--files-only", "--manage", config.manage, "--domain", domain, "--database", database,
-              "--pg-socket", config.pg_socket, "--output-dir", instances_dir] + module_options(params)
+      package = System.package_of(params)
+      argv = provision_for(package) + ["--files-only", "--manage", manage_for(package).join(' '), "--domain", domain,
+                                       "--database", database, "--pg-socket", config.pg_socket,
+                                       "--output-dir", instances_dir] + module_options(params)
       argv += ["--locale", locale(params), slug]
       Dir.mkdir_p(instances_dir)
-      run!(argv, pg_env)
+      output = run!(argv, pg_env)
+      declare_package(slug, package)
+      output
     end
 
     # Société : options de `partiduo-provision` (valeurs passées telles
@@ -601,16 +620,47 @@ module PartiduoAgent
       env
     end
 
-    def manage_for(version : String?) : Array(String)
-      if version && !version.empty?
-        candidate = File.join(config.releases_dir, version, "bin", "partiduo-manage")
-        return [candidate] if File.exists?(candidate)
+    # Outils du paquet en mode local : `--manage` et `--provision` pour
+    # `app`, `--manage-devel` et `--provision-devel` pour `devel` (à défaut,
+    # ceux de `app`, signalé au journal).
+    def manage_for(package : String?) : Array(String)
+      command = config.manage
+      if package == "devel"
+        command = config.manage_devel.presence || begin
+          log("mode local : --manage-devel non fourni, partiduo-manage de app utilisé pour devel")
+          config.manage
+        end
       end
-      config.manage.split(' ', remove_empty: true)
+      command.split(' ', remove_empty: true)
     end
 
-    def instance(slug : String, action : String, args : Array(String), version : String? = nil,
+    def provision_for(package : String) : Array(String)
+      command = package == "devel" ? config.provision_devel.presence || config.provision : config.provision
+      command.split(' ', remove_empty: true)
+    end
+
+    # Mode local : le paquet d'une instance, retenu à son provisionnement
+    # (en production, c'est la déclaration de l'instance sur le serveur).
+    def package_file(slug : String) : String
+      File.join(instance_dir(slug), "PACKAGE")
+    end
+
+    def declare_package(slug : String, package : String) : Nil
+      Dir.mkdir_p(instance_dir(slug))
+      File.write(package_file(slug), package)
+    end
+
+    def declared_package(slug : String) : String?
+      file = package_file(slug)
+      value = File.exists?(file) ? File.read(file).strip : ""
+      PartiduoAdmin::Protocol.valid_package?(value) ? value : nil
+    end
+
+    def instance(slug : String, action : String, args : Array(String), package : String? = nil,
                  database : String? = nil) : InstanceReply
+      if package && !PartiduoAdmin::Protocol.valid_package?(package)
+        raise StepError.new("paquet invalide : #{package}", "usage")
+      end
       env = instance_env(slug)
       # Mode local : pièces jointes sous work_dir, pas sous l'arborescence
       # de production que porte le fichier d'environnement.
@@ -621,7 +671,7 @@ module PartiduoAgent
       else
         env["DATABASE_URL"] = "postgres:///#{database_for(slug)}?host=#{config.pg_socket}"
       end
-      argv = manage_for(version || current_release(slug)) + ["instance", action] + args
+      argv = manage_for(package || declared_package(slug)) + ["instance", action] + args
       code, output, errors = run(argv, env)
       InstanceReply.new(code, JSON.parse(reply_line(output, errors)))
     end
@@ -648,17 +698,6 @@ module PartiduoAgent
         File.delete(marker(slug)) if File.exists?(marker(slug))
       end
       File.exists?(marker(slug)) ? "stopped" : "running"
-    end
-
-    def switch_release(slug : String, version : String) : Nil
-      Dir.mkdir_p(instance_dir(slug))
-      log("mode local : version #{version} pour #{slug}")
-      File.write(File.join(instance_dir(slug), "RELEASE"), version)
-    end
-
-    def current_release(slug : String) : String?
-      file = File.join(instance_dir(slug), "RELEASE")
-      File.exists?(file) ? File.read(file).strip : nil
     end
 
     def pg_dump(database : String, path : String) : Nil
@@ -880,11 +919,11 @@ module PartiduoAgent
   #   instance, démarrage et arrêt de son service, certificat ;
   # * `partiduo-agent-instance` (sous le compte des instances) : interface
   #   d'instance, `partiduo-provision`, bases (création, suppression,
-  #   `pg_dump`, `pg_restore`), version, pièces jointes.
+  #   `pg_dump`, `pg_restore`), pièces jointes.
   #
   # Les bases et leurs objets appartiennent ainsi au rôle de l'instance
   # (`partiduo`), celui qui les fait tourner (D-AFN-005). L'exécutant ne
-  # passe que des valeurs : sous-domaine, nom de base, version, chemins sous
+  # passe que des valeurs : sous-domaine, nom de base, paquet, chemins sous
   # le répertoire des sauvegardes ; les enveloppes calculent le reste de
   # leur propre configuration (`/etc/partiduo-agent/helpers.conf`).
   class ProductionSystem < LocalSystem
@@ -937,7 +976,7 @@ module PartiduoAgent
       guard_slug!(slug)
       guard_database!(database)
       raise StepError.new("base refusée : #{database}", "usage") unless database == database_for(slug)
-      argv = ["provision", slug] + company_options(params) + module_options(params) + release_option(params)
+      argv = ["provision", slug] + company_options(params) + module_options(params) + package_option(params)
       argv << "--skip-createdb" if skip_createdb
       run!(as_instance(argv))
     end
@@ -946,12 +985,13 @@ module PartiduoAgent
       guard_slug!(slug)
       raise StepError.new("base refusée : #{database}", "usage") unless database == database_for(slug)
       run!(as_instance(["provision", slug, "--files-only", "--locale", locale(params)] + module_options(params) +
-                       release_option(params)))
+                       package_option(params)))
     end
 
-    private def release_option(params : JSON::Any) : Array(String)
-      version = params["version"]?.try(&.as_s?) || ""
-      PartiduoAdmin::Protocol.valid_version?(version) ? ["--release", version] : [] of String
+    # Paquet qui servira l'instance : toujours transmis (`app` par défaut),
+    # jamais une autre valeur que `app` ou `devel`.
+    private def package_option(params : JSON::Any) : Array(String)
+      ["--package", System.package_of(params)]
     end
 
     def install_instance(slug : String, host : String) : Bool
@@ -966,14 +1006,15 @@ module PartiduoAgent
       code == 0
     end
 
-    def instance(slug : String, action : String, args : Array(String), version : String? = nil,
+    # `-` pour le paquet : l'enveloppe prend celui qui sert déjà l'instance.
+    def instance(slug : String, action : String, args : Array(String), package : String? = nil,
                  database : String? = nil) : InstanceReply
       guard_slug!(slug)
       guard_database!(database) if database
-      if version && !PartiduoAdmin::Protocol.valid_version?(version)
-        raise StepError.new("version invalide : #{version}", "usage")
+      if package && !PartiduoAdmin::Protocol.valid_package?(package)
+        raise StepError.new("paquet invalide : #{package}", "usage")
       end
-      argv = as_instance(["cli", slug, database || "-", version || "-", action] + args)
+      argv = as_instance(["cli", slug, database || "-", package || "-", action] + args)
       code, output, errors = run(argv)
       InstanceReply.new(code, JSON.parse(reply_line(output, errors)))
     end
@@ -983,17 +1024,6 @@ module PartiduoAgent
       run!(as_root(["service", slug, command])) unless command == "status"
       code, _, _ = run(["systemctl", "is-active", "--quiet", "partiduo-#{slug}.service"], quiet: true)
       code == 0 ? "running" : "stopped"
-    end
-
-    def switch_release(slug : String, version : String) : Nil
-      guard_slug!(slug)
-      run!(as_instance(["release", slug, version]))
-    end
-
-    def current_release(slug : String) : String?
-      File.basename(File.readlink(File.join(config.install_root, "instances", slug, "release")))
-    rescue File::Error
-      nil
     end
 
     def pg_dump(database : String, path : String) : Nil

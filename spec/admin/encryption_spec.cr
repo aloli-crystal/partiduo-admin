@@ -83,7 +83,7 @@ describe "Chiffrement des sauvegardes : réglages (D-CHF-001, D-CHF-008)" do
     params["mode"].should eq("cabinet")
     params["key_fingerprint"].should eq(fingerprint)
     Crypto::PublicKey.new(params["public_key"].as_s).fingerprint.should eq(fingerprint)
-    # Archivage et montée de version : sauvegardes chiffrées de même.
+    # Archivage : sauvegarde chiffrée de même.
     PartiduoAdmin::Fleet.lifecycle(admin, dossier, "archive", "fin").value!.params_json["encryption"]["mode"].should eq("cabinet")
   end
 

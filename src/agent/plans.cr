@@ -29,12 +29,12 @@ module PartiduoAgent
       params[key]?.try(&.as_a?).try(&.map(&.to_s)) || [] of String
     end
 
-    # Version de partiduo-app portée par un paramètre : vide, ou une version
-    # publiée (`Protocol::VERSION`) ; jamais un chemin.
-    def release(key : String) : String
-      value = param(key)
-      unless value.empty? || PartiduoAdmin::Protocol.valid_version?(value)
-        raise StepError.new("version invalide : #{value}", "usage")
+    # Paquet FreeBSD du dossier (`package`) : vide, `app` ou `devel`
+    # (`Protocol::PACKAGES`) ; jamais un chemin.
+    def package : String
+      value = param("package")
+      unless value.empty? || PartiduoAdmin::Protocol.valid_package?(value)
+        raise StepError.new("paquet invalide : #{value}", "usage")
       end
       value
     end
@@ -124,18 +124,20 @@ module PartiduoAgent
     end
 
     # Appel de l'interface en ligne de commande d'instance ; échec levé.
-    def instance!(action : String, args = [] of String, version : String? = nil, database : String? = nil,
+    # `package` : seulement pour une instance pas encore déclarée sur le
+    # serveur (sinon, le paquet qui la sert).
+    def instance!(action : String, args = [] of String, package : String? = nil, database : String? = nil,
                   slug_override : String? = nil) : JSON::Any
-      reply = instance(action, args, version, database, slug_override)
+      reply = instance(action, args, package, database, slug_override)
       raise StepError.new("instance #{action} : #{reply.message}", reply.error_code) unless reply.ok?
       reply.data
     end
 
-    def instance(action : String, args = [] of String, version : String? = nil, database : String? = nil,
+    def instance(action : String, args = [] of String, package : String? = nil, database : String? = nil,
                  slug_override : String? = nil) : InstanceReply
       full = args + ["--task", task.id.to_s]
       full += ["--requested-by", task.requested_by] unless task.requested_by.empty?
-      system.instance(slug_override || slug, action, full, version, database)
+      system.instance(slug_override || slug, action, full, package, database)
     end
   end
 
@@ -154,7 +156,6 @@ module PartiduoAgent
       "instance.archive"         => Plan.new { |ctx| archive(ctx) },
       "instance.restore_archive" => Plan.new { |ctx| restore_archive(ctx) },
       "instance.delete"          => Plan.new { |ctx| delete(ctx) },
-      "instance.upgrade"         => Plan.new { |ctx| upgrade(ctx) },
       "instance.admin_invite"    => Plan.new { |ctx| admin_invite(ctx) },
       "backup.run"               => Plan.new { |ctx| backup(ctx, ctx.param("kind").presence || "manual") },
       "backup.prune"             => Plan.new { |ctx| prune(ctx) },
@@ -176,11 +177,12 @@ module PartiduoAgent
 
     # Contrat de l'interface d'instance : majeure attendue (instance-cli.adoc).
     # Renvoie la version lue (`1.1.0`), pour les gestes qui dépendent d'une
-    # mineure.
-    def self.check_contract(ctx : Context, version : String? = nil) : String
+    # mineure. `package` : pour une instance pas encore déclarée (création),
+    # l'outil du paquet qui la servira.
+    def self.check_contract(ctx : Context, package : String? = nil) : String
       contract = ""
       ctx.step("contrat") do
-        data = ctx.instance!("version", version: version)
+        data = ctx.instance!("version", package: package)
         contract = data["contract"]?.try(&.as_s?) || ""
         major = contract.split('.').first.to_i?
         unless major == PartiduoAdmin::Protocol::INSTANCE_CLI_MAJOR
@@ -202,10 +204,13 @@ module PartiduoAgent
       system = ctx.system
       database = ctx.database
       host = ctx.host
-      check_contract(ctx, ctx.release("version").presence)
+      # Instance pas encore déclarée : le paquet choisi dans l'admin (`app`
+      # s'il n'est pas dit) fournit l'outil `manage` et la servira.
+      package = ctx.package.presence || "app"
+      check_contract(ctx, package)
       ctx.step("provisionnement") do
         exists = system.database_exists?(database)
-        provisioned = exists && ctx.instance("status", database: database).data["provisioned"]?.try(&.as_bool?) == true
+        provisioned = exists && ctx.instance("status", package: package, database: database).data["provisioned"]?.try(&.as_bool?) == true
         if provisioned
           ctx.log("base #{database} déjà provisionnée : rien à refaire")
         else
@@ -214,12 +219,11 @@ module PartiduoAgent
             ctx.journal["invitation_url"] = link[0]
           end
         end
-        system.switch_release(ctx.slug, ctx.release("version")) unless ctx.release("version").empty?
       end
       ctx.step("installation") do
         ctx.journal["certificate"] = system.install_instance(ctx.slug, host).to_s
       end
-      status = ctx.instance!("status", database: database)
+      status = ctx.instance!("status", package: package, database: database)
       raise StepError.new("instance non provisionnée après création", "refused") unless status["provisioned"]?.try(&.as_bool?)
       ctx.set("database", database)
       ctx.set("version", status["version"]?.try(&.as_s?) || "")
@@ -376,66 +380,6 @@ module PartiduoAgent
       ctx.set("deleted", true)
     end
 
-    # --- Montée de version (sauvegarde préalable, retour arrière) --------------
-
-    # Le service est arrêté AVANT la sauvegarde préalable : rien n'est écrit
-    # entre la sauvegarde et un éventuel retour arrière (D-AFN-007). Tout
-    # échec, prévu (`StepError`) ou non (clé absente, réponse illisible,
-    # erreur de fichier), déclenche le retour arrière.
-    def self.upgrade(ctx : Context) : Nil
-      target = ctx.release("version")
-      from = ctx.release("from_version").presence || ctx.system.current_release(ctx.slug) || ""
-      raise StepError.new("version cible manquante", "usage") if target.empty?
-      check_contract(ctx, target)
-      backup_data : JSON::Any? = nil
-      begin
-        ctx.step("arrêt du service") { ctx.system.service(ctx.slug, "stop") }
-        backup_data = backup(ctx, "pre_upgrade", prefix: "pre-upgrade")
-        ctx.step("bascule vers #{target}") { ctx.system.switch_release(ctx.slug, target) }
-        ctx.step("migrations") { ctx.instance!("migrate", version: target) }
-        ctx.step("démarrage du service") { ctx.system.service(ctx.slug, "start") }
-        status = ctx.instance!("status", version: target)
-        pending = status["migrations"]?.try(&.["pending"]?).try(&.as_i?) || 0
-        raise StepError.new("#{pending} migration(s) en attente après la montée") unless pending.zero?
-        ctx.result.clear
-        ctx.set("version", status["version"]?.try(&.as_s?) || target)
-        ctx.set("backup", backup_data)
-        ctx.set("rolled_back", false)
-      rescue error
-        ctx.log("échec : #{error.message} — retour arrière vers #{from}")
-        code = error.is_a?(StepError) ? error.code : "internal"
-        begin
-          rollback(ctx, target, from, backup_data)
-        rescue ex
-          raise StepError.new("montée vers #{target} échouée (#{error.message}) ; retour arrière incomplet : " \
-                              "#{ex.message}", "internal")
-        end
-        ctx.result.clear
-        ctx.set("backup", backup_data) if backup_data
-        ctx.set("rolled_back", true)
-        ctx.set("version", from)
-        # Le dossier est revenu à son état d'avant : une reprise repartira
-        # de zéro, sauvegarde comprise.
-        ctx.journal.reset
-        raise StepError.new("montée vers #{target} échouée, retour à #{from} : #{error.message}", code)
-      end
-    end
-
-    def self.rollback(ctx : Context, target : String, from : String, backup_data : JSON::Any?) : Nil
-      system = ctx.system
-      system.service(ctx.slug, "stop")
-      system.switch_release(ctx.slug, from) unless from.empty?
-      if ctx.journal.done?("migrations") || ctx.journal.done?("bascule vers #{target}")
-        # Migrations peut-être en partie appliquées : la base revient à la
-        # sauvegarde préalable, prise service arrêté.
-        path = backup_data.try(&.["path"]?).try(&.as_s?) || raise StepError.new("sauvegarde préalable introuvable")
-        system.dropdb(ctx.database)
-        system.createdb(ctx.database)
-        system.restore_database(ctx.database, path, ctx.keyring)
-      end
-      system.service(ctx.slug, "start")
-    end
-
     # --- Opérations sensibles : mode de validation (D-VAL2-005) --------------
 
     # Mode reçu : `single` ou `dual` ; absent, `dual` (administration
@@ -551,13 +495,20 @@ module PartiduoAgent
         "size_bytes"   => system.size(dump) + system.size(media),
         "sha256"       => system.sha256(dump),
         "media_sha256" => system.sha256(media),
-        "version"      => system.current_release(ctx.slug) || ctx.param("version"),
+        "version"      => instance_version(ctx),
         "taken_at"     => Time.parse(stamp, "%Y%m%dT%H%M%SZ", Time::Location::UTC).to_rfc3339,
         "encryption"   => sealer.try(&.describe) || {"mode" => "none"},
       }
       json = JSON.parse(data.to_json)
       data.each { |key, value| ctx.set(key, value) } if ctx.task.kind == "backup.run"
       json
+    end
+
+    # Version (semver) que rend l'instance (`status`), vide si elle ne
+    # répond pas : l'administration garde alors celle qu'elle connaît.
+    def self.instance_version(ctx : Context) : String
+      reply = ctx.instance("status")
+      reply.ok? ? (reply.data["version"]?.try(&.as_s?) || "") : ""
     end
 
     # Clé de données de la sauvegarde `prefix` et son enveloppe, tirées au
@@ -753,12 +704,11 @@ module PartiduoAgent
       ctx.step("fichiers de service") { system.provision_files(new_slug, ctx.domain, ctx.params, database) }
       ctx.step("installation") do
         ctx.journal["certificate"] = system.install_instance(new_slug, host).to_s
-        version = ctx.release("version")
-        system.switch_release(new_slug, version) unless version.empty?
       end
       ctx.step("pièces jointes") { system.restore_media(new_slug, media, ctx.keyring) unless media.empty? }
       ctx.set("database", database)
-      ctx.set("version", ctx.instance!("status", database: database, slug_override: new_slug)["version"]? || "")
+      status = ctx.instance!("status", package: ctx.package.presence || "app", database: database, slug_override: new_slug)
+      ctx.set("version", status["version"]? || "")
       ctx.set("certificate", {"issued" => ctx.journal["certificate"]? == "true", "staging" => system.config.acme_staging})
     end
 

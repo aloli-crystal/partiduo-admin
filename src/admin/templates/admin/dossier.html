@@ -19,6 +19,7 @@
       <dt>{% translate "admin.dossiers.fields.regime" %}</dt><dd>{{ dossier.regime|upcase }}</dd>
       <dt>{% translate "admin.dossiers.fields.modules" %}</dt><dd>{{ dossier.modules }}</dd>
       <dt>{% translate "admin.dossiers.fields.extensions" %}</dt><dd>{{ dossier.extensions|default:"—" }}</dd>
+      <dt>{% translate "admin.dossiers.fields.package" %}</dt><dd>{% translate dossier.package_key %}</dd>
       <dt>{% translate "admin.dossiers.fields.version" %}</dt><dd class="pd-mono">{{ dossier.version|default:"—" }}</dd>
       <dt>{% translate "admin.dossiers.fields.server" %}</dt><dd>{{ dossier.server_name }}</dd>
       <dt>{% translate "admin.dossiers.fields.database" %}</dt><dd class="pd-mono">{{ dossier.database|default:"—" }}</dd>
@@ -41,18 +42,6 @@
     </dl>
   </section>
 </div>
-
-{% if can.upgrade %}
-<section class="pd-panel" aria-labelledby="pd-upgrade-title">
-  <h2 id="pd-upgrade-title">{% translate "admin.actions.upgrade" %}</h2>
-  {% if releases %}<form method="post" action="{% url 'dossier_action' id: dossier.id, action: 'upgrade' %}" class="pd-inline">
-    {% csrf_input %}
-    <div class="field"><label class="label" for="pd-release">{% translate "admin.releases.version" %}</label><div class="select"><select id="pd-release" name="release_id">{% for release in releases %}<option value="{{ release.id }}">{{ release.version }}</option>{% endfor %}</select></div></div>
-    <button class="button is-primary" type="submit">{% translate "admin.actions.upgrade" %}</button>
-  </form>
-  <p class="help">{% translate "admin.actions.upgrade_help" %}</p>{% else %}<p class="pd-muted">{% translate "admin.releases.none" %}</p>{% endif %}
-</section>
-{% endif %}
 
 {% if can.restore %}
 <section class="pd-panel" aria-labelledby="pd-restore-title">

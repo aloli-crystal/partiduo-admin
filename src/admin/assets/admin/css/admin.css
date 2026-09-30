@@ -66,7 +66,7 @@ body { color: var(--pd-ink); font-family: var(--bulma-family-primary); }
 .pd-state { display: inline-block; padding: 0 .5rem; border-radius: 999px; font-size: .8rem; font-weight: 600; background: var(--pd-row-alt); }
 .pd-state-active, .pd-state-succeeded, .pd-state-done, .pd-state-verified, .pd-state-approved, .pd-state-running.pd-service { background: var(--pd-ok-bg); color: var(--pd-ok); }
 .pd-state-error, .pd-state-failed, .pd-state-rejected, .pd-state-danger { background: var(--pd-gap-bg); color: var(--pd-gap); }
-.pd-state-suspended, .pd-state-pending, .pd-state-creating, .pd-state-warning, .pd-state-waiting { background: var(--pd-warn-bg); color: var(--pd-warn); }
+.pd-state-suspended, .pd-state-pending, .pd-state-creating, .pd-state-warning { background: var(--pd-warn-bg); color: var(--pd-warn); }
 fieldset.pd-fieldset { border: 0; padding: 0; margin: 0 0 .75rem; }
 fieldset.pd-fieldset legend { font-weight: 600; margin-block-end: .35rem; }
 .pd-checks { display: flex; flex-wrap: wrap; gap: .25rem 1.25rem; }

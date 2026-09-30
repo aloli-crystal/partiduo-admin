@@ -5,7 +5,7 @@ require "json"
 module PartiduoAdmin
   module Tasks
     # Effets d'une tâche terminée sur l'inventaire : état et version du
-    # dossier, sauvegardes, certificats, supervision, progression des vagues.
+    # dossier, sauvegardes, certificats, supervision.
     module Effects
       # Clés du résultat jamais conservées : le lien d'invitation et son
       # jeton ne sont écrits nulle part ailleurs que dans le courriel envoyé
@@ -42,7 +42,6 @@ module PartiduoAdmin
         "instance.restore_archive" => Handler.new { |_, dossier, success, _, now| state(dossier, success, "active", now) },
         "instance.archive"         => Handler.new { |task, dossier, success, result, now| archived(task, dossier, success, result, now) },
         "instance.delete"          => Handler.new { |_, dossier, success, _, now| deleted(dossier, success, now) },
-        "instance.upgrade"         => Handler.new { |task, dossier, success, result, now| upgraded(task, dossier, success, result, now) },
         "instance.admin_invite"    => Handler.new { |task, dossier, success, result, _| invited(task, dossier, success, result) },
         "backup.run"               => Handler.new { |task, dossier, success, result, now| backed_up(task, dossier, success, result, now) },
         "backup.prune"             => Handler.new { |task, _, success, _, now| pruned(task, success, now) },
@@ -115,19 +114,6 @@ module PartiduoAdmin
         dossier.state = "deleted"
         dossier.deleted_at = now
         dossier.save!
-      end
-
-      def self.upgraded(task : Task, dossier : Dossier, ok : Bool, result : JSON::Any, now : Time) : Nil
-        if backup = result["backup"]?
-          record_backup(task, dossier, "pre_upgrade", backup, now) if backup.as_h?
-        end
-        if ok
-          dossier.version = result["version"]?.try(&.as_s?) || task.params_json["version"]?.try(&.as_s?) || dossier.version
-          dossier.save!
-        end
-        if wave = task.wave
-          Waves.advance(wave, now)
-        end
       end
 
       def self.invited(task : Task, dossier : Dossier, ok : Bool, result : JSON::Any) : Nil

@@ -45,11 +45,11 @@ partiduo-app), tâches idempotentes et reprenables, journal renvoyé.
   contact. La facturation (tarifs, périodes, factures) est hors périmètre ;
   la vue « dossiers par donneur d'ordre » s'exporte en CSV.
 * *Dossiers* (inventaire) : sous-domaine, régime, modules, extensions,
-  serveur, version, état, cabinet gestionnaire, donneur d'ordre obligatoire.
-* *Serveurs* (jeton d'exécutant en empreinte), *tâches*, *vagues* de
-  montée de version, *sauvegardes* (mode de chiffrement, empreinte de la
-  clé), *versions*, *demandes d'opérations sensibles* (mode à une ou deux
-  personnes),
+  serveur, paquet, version relevée sur l'instance, état, cabinet
+  gestionnaire, donneur d'ordre obligatoire.
+* *Serveurs* (jeton d'exécutant en empreinte), *tâches*, *sauvegardes*
+  (mode de chiffrement, empreinte de la clé), *demandes d'opérations
+  sensibles* (mode à une ou deux personnes),
   *alertes*, *certificats émis* (quota Let's Encrypt) et *journal d'audit*
   en ajout seul (déclencheur PostgreSQL).
 
@@ -62,12 +62,35 @@ Créer ; modifier modules et extensions ; suspendre ; réactiver ; archiver
 supprimer définitivement après la durée légale (à une ou deux personnes,
 voir ci-dessous) ;
 sauvegardes planifiées, rétention, restauration à une date (instance neuve
-ou remplacement), restauration test ; montée de version par dossier ou par
-vagues avec sauvegarde préalable et retour arrière ; supervision (service,
+ou remplacement), restauration test ; supervision (service,
 base, certificat et échéance, quota Let's Encrypt, disque, dernière
 sauvegarde, exécutant silencieux) avec alertes à l'écran et par courriel ;
 recours d'accès par réémission de l'invitation d'administrateur (à une ou
 deux personnes).
+
+== Paquet d'un dossier
+
+Les serveurs d'hébergement sont sous FreeBSD ; les instances Partiduo y
+sont installées par deux paquets qui cohabitent : `partiduo-app`
+(production) et `partiduo-app-devel` (développement). Chaque dossier est
+servi par l'un des deux, son *paquet* (`app` ou `devel`), choisi à la
+création (`app` par défaut) et affiché sur la fiche et la liste des
+dossiers ; une restauration dans une instance neuve garde le paquet du
+dossier restauré. Chaque tâche d'un dossier transmet son paquet à
+l'exécutant (paramètre `package`), qui ne s'en sert que pour une instance
+pas encore déclarée sur le serveur (création, instance neuve) : ensuite,
+c'est le paquet qui la sert.
+
+La *mise à jour des paquets* n'est pas l'affaire de l'administration : beryl
+fait le `pkg upgrade` sur tous les serveurs, et le script rc.d de chaque
+instance applique ses migrations à son démarrage. L'administration ne
+publie donc aucune version et ne monte aucun dossier ; la version affichée
+d'un dossier est celle que rend l'instance (création, restauration,
+supervision), et chaque sauvegarde retient celle de l'instance au moment
+de la prise.
+
+API de l'exécutant 2.0.0 : type `instance.upgrade` et état de tâche
+`waiting` retirés, paramètre `version` des tâches remplacé par `package`.
 
 == Validation à deux au choix
 
@@ -275,14 +298,18 @@ openssl kdf -keylen 32 -kdfopt digest:SHA256 -kdfopt hexkey:$(xxd -p -c 64 dek.b
 `dry-run` (à blanc)::
 Rien n'est exécuté : état simulé, chaque geste écrit au journal. Specs et
 répétitions. `--fail-on TEXTE` (à blanc seulement) fait échouer la première
-opération qui contient `TEXTE` : répétition d'un retour arrière, par exemple
-`--fail-on "instance migrate"` pour une montée de version.
+opération qui contient `TEXTE` : répétition d'un échec et de sa reprise, par
+exemple `--fail-on "tar"` pour une sauvegarde.
 
 `local`::
 Machine de développement : vraies bases `partiduo_adm_*` (toute autre base
 est refusée), vrais `partiduo-provision`, `pg_dump`, `pg_restore`, `tar` ;
 ni vhost, ni systemd, ni Let's Encrypt — les fichiers de service sont
 produits dans `--work-dir`, l'arrêt d'un service est un fichier témoin.
+`--manage` et `--provision` désignent les outils du paquet `app`,
+`--manage-devel` et `--provision-devel` ceux du paquet `devel` (à défaut,
+ceux de `app`) ; le paquet d'une instance est retenu dans le fichier
+`PACKAGE` de son répertoire.
 
 `production`::
 Serveur d'hébergement : `sudo -n` limité par `deploy/partiduo-agent.sudoers` à
@@ -290,7 +317,7 @@ deux scripts enveloppes possédés par root (`deploy/libexec/`), qui valident
 leurs arguments et lisent `/etc/partiduo-agent/helpers.conf`
 (`deploy/helpers.conf.example`) : `partiduo-agent-root` (installation et
 retrait d'une instance, service, certificat) et `partiduo-agent-instance`
-(interface d'instance, `partiduo-provision`, bases, sauvegardes, version,
+(interface d'instance, `partiduo-provision`, bases, sauvegardes,
 sous le compte des instances, propriétaire des bases). `--domain` est
 obligatoire : l'hôte et la base de chaque tâche sont recalculés depuis le
 sous-domaine (D-AFN-002, D-AFN-004, D-AFN-005).

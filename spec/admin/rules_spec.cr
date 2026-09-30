@@ -4,7 +4,7 @@ require "../spec_helper"
 
 # Règles et cas limites de l'administration du parc (ADR-008) qui
 # complètent les specs des modèles, des droits et des actions : contraintes
-# en base, référentiels, double validation, vagues, planification,
+# en base, référentiels, double validation, paquet d'un dossier, planification,
 # supervision, API de l'exécutant.
 
 private def finish_task(task : PartiduoAdmin::Task, ok = true, result = {} of String => String)
@@ -91,21 +91,22 @@ describe "Protocole : sous-domaines réservés" do
     outcome.errors["slug"].should eq(["admin.errors.dossier.slug"])
   end
 
-  it "n'accepte pour un dossier qu'une version publiée, jamais une valeur libre" do
+  it "n'accepte pour un dossier que le paquet app ou devel, jamais une valeur libre" do
     firm = AdminSpec.firm
     server, _ = AdminSpec.server
     payer = AdminSpec.payer(firm)
     root = AdminSpec.super_admin
-    base = dossier_input(firm, server, payer, "version-libre")
+    base = dossier_input(firm, server, payer, "paquet-libre")
     trap = PartiduoAdmin::Fleet::DossierInput.new(slug: base.slug, label: base.label, regime: base.regime, admin_email: base.admin_email,
-      server_id: base.server_id, firm_id: base.firm_id, payer_id: base.payer_id, version: "../../../tmp/piege")
-    PartiduoAdmin::Fleet.create_dossier(root, trap).errors["version"].should eq(["admin.errors.invalid"])
-    PartiduoAdmin::Protocol.valid_version?("0.2.0/../x").should be_false
-    PartiduoAdmin::Protocol.valid_version?("0.2.0-rc.1").should be_true
-    PartiduoAdmin::Release.create!(version: "0.2.0")
-    ok = PartiduoAdmin::Fleet::DossierInput.new(slug: base.slug, label: base.label, regime: base.regime, admin_email: base.admin_email,
-      server_id: base.server_id, firm_id: base.firm_id, payer_id: base.payer_id, version: "0.2.0")
-    PartiduoAdmin::Fleet.create_dossier(root, ok).value!.version.should eq("0.2.0")
+      server_id: base.server_id, firm_id: base.firm_id, payer_id: base.payer_id, package: "../../../tmp/piege")
+    PartiduoAdmin::Fleet.create_dossier(root, trap).errors["package"].should eq(["admin.errors.dossier.package"])
+    PartiduoAdmin::Protocol.valid_package?("devel/../x").should be_false
+    PartiduoAdmin::Protocol.valid_package?("0.2.0").should be_false
+    # Par défaut : le paquet de production.
+    PartiduoAdmin::Fleet.create_dossier(root, base).value!.package.should eq("app")
+    ok = PartiduoAdmin::Fleet::DossierInput.new(slug: "paquet-devel", label: base.label, regime: base.regime, admin_email: base.admin_email,
+      server_id: base.server_id, firm_id: base.firm_id, payer_id: base.payer_id, package: "devel")
+    PartiduoAdmin::Fleet.create_dossier(root, ok).value!.package.should eq("devel")
   end
 end
 
@@ -187,7 +188,7 @@ describe "Référentiels de l'administration" do
     PartiduoAdmin::Auth::Invitations.consume(second, SPEC_NOW).should be_nil
   end
 
-  it "contrôle cabinets, serveurs, versions et donneurs d'ordre" do
+  it "contrôle cabinets, serveurs et donneurs d'ordre" do
     root = AdminSpec.super_admin
     firm_admin = AdminSpec.user
     PartiduoAdmin::Directory.create_firm(firm_admin, "Cabinet Est").errors["base"].should eq(["admin.errors.forbidden"])
@@ -198,11 +199,6 @@ describe "Référentiels de l'administration" do
 
     PartiduoAdmin::Directory.create_server(root, "Hote_1", "h.example.net", "partiduo.app").errors["name"].should eq(["admin.errors.invalid"])
     PartiduoAdmin::Directory.create_server(root, "hote1", "h.example.net", "partiduo").errors["domain"].should eq(["admin.errors.invalid"])
-
-    PartiduoAdmin::Directory.create_release(root, "v1", "", false).errors["version"].should eq(["admin.errors.invalid"])
-    PartiduoAdmin::Directory.create_release(root, "0.1.0", "", true).ok?.should be_true
-    PartiduoAdmin::Directory.create_release(root, "0.2.0-rc.1", "", true).ok?.should be_true
-    PartiduoAdmin::Release.filter(is_default: true).map(&.version).should eq(["0.2.0-rc.1"])
 
     firm = AdminSpec.firm
     input = PartiduoAdmin::Directory::PayerInput.new(kind: "gratuit", firm_id: PartiduoAdmin.id?(firm.pk), name: "",
@@ -321,17 +317,16 @@ describe "Cycle de vie : cas limites" do
     PartiduoAdmin::Fleet.backup_now(foreign, active).errors["base"].should eq(["admin.errors.forbidden"])
   end
 
-  it "ne monte pas un dossier à sa propre version, et refuse la montée au gestionnaire" do
+  it "ne connaît plus de montée de version : la mise à jour des paquets relève de beryl" do
     firm = AdminSpec.firm
     server, _ = AdminSpec.server
-    dossier = AdminSpec.dossier(firm, server, version: "0.2.0")
-    release = PartiduoAdmin::Release.create!(version: "0.2.0")
-    admin = AdminSpec.user(PartiduoAdmin::Config::FIRM_ADMIN, firm)
-    PartiduoAdmin::Fleet.upgrade(admin, dossier, release).errors["release_id"].should eq(["admin.errors.release.same"])
-    manager = AdminSpec.user(PartiduoAdmin::Config::FILE_MANAGER, firm)
-    PartiduoAdmin::Assignment.create!(user: manager, dossier: dossier)
-    other = PartiduoAdmin::Release.create!(version: "0.3.0")
-    PartiduoAdmin::Fleet.upgrade(manager, dossier, other).errors["base"].should eq(["admin.errors.forbidden"])
+    dossier = AdminSpec.dossier(firm, server)
+    PartiduoAdmin::Protocol.valid_kind?("instance.upgrade").should be_false
+    PartiduoAdmin::Protocol::STATES.should_not contain("waiting")
+    expect_raises(ArgumentError, /instance.upgrade/) do
+      PartiduoAdmin::Tasks.enqueue("instance.upgrade", server, PartiduoAdmin::Tasks.dossier_params(dossier), dossier: dossier)
+    end
+    PartiduoAdmin::Access.can?(AdminSpec.super_admin, :upgrade, dossier).should be_false
   end
 
   it "refuse la restauration test d'une sauvegarde échouée ou élaguée" do
@@ -378,34 +373,7 @@ describe "Cycle de vie : cas limites" do
   end
 end
 
-describe "Vagues et planification : cas limites" do
-  it "libère les lots dans l'ordre et termine la vague quand tout a réussi" do
-    firm = AdminSpec.firm
-    server, _ = AdminSpec.server
-    3.times { |i| AdminSpec.dossier(firm, server, slug: "lot#{i}") }
-    AdminSpec.dossier(firm, server, slug: "deja", version: "0.4.0")
-    AdminSpec.dossier(firm, server, slug: "suspendu", state: "suspended")
-    release = PartiduoAdmin::Release.create!(version: "0.4.0")
-    root = AdminSpec.super_admin
-    PartiduoAdmin::Waves.start(root, release, 0).errors["batch_size"].should eq(["admin.errors.invalid"])
-    wave = PartiduoAdmin::Waves.start(root, release, 2).value!
-    tasks = PartiduoAdmin::Task.filter(wave_id: wave.pk).order("id").to_a
-    tasks.map(&.dossier_slug).should eq(%w[lot0 lot1 lot2])
-    tasks.map(&.state).should eq(%w[pending pending waiting])
-    # Une tâche retenue n'est jamais remise à l'exécutant.
-    PartiduoAdmin::Tasks.claim(server, SPEC_NOW).try(&.pk).should eq(tasks[0].pk)
-    PartiduoAdmin::Tasks.claim(server, SPEC_NOW).try(&.pk).should eq(tasks[1].pk)
-    PartiduoAdmin::Tasks.claim(server, SPEC_NOW).should be_nil
-
-    finish_task(tasks[0], true, {"version" => "0.4.0"})
-    tasks[2].reload.state.should eq("waiting")
-    finish_task(tasks[1].reload, true, {"version" => "0.4.0"})
-    tasks[2].reload.state.should eq("pending")
-    finish_task(tasks[2].reload, true, {"version" => "0.4.0"})
-    wave.reload.state.should eq("done")
-    PartiduoAdmin::Waves.start(root, release, 2).errors["base"].should eq(["admin.errors.wave.nothing"])
-  end
-
+describe "Planification : cas limites" do
   it "n'élague ni une archive figée ni la dernière sauvegarde réussie, et respecte le rythme hebdomadaire" do
     firm = AdminSpec.firm
     server, _ = AdminSpec.server

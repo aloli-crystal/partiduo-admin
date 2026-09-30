@@ -46,8 +46,10 @@ module PartiduoAgent
     property backup_dir : String = "/var/backups/partiduo"
     property manage : String = ENV["PARTIDUO_MANAGE"]? || "/opt/partiduo/current/bin/partiduo-manage"
     property provision : String = ENV["PARTIDUO_PROVISION"]? || "/opt/partiduo/current/bin/partiduo-provision"
-    property releases_dir : String = "/opt/partiduo/releases"
-    property install_root : String = "/opt/partiduo"
+    # Mode local : outils du paquet `devel` (`partiduo-app-devel`) ; vides,
+    # ceux de `app`.
+    property manage_devel : String = ENV["PARTIDUO_MANAGE_DEVEL"]? || ""
+    property provision_devel : String = ENV["PARTIDUO_PROVISION_DEVEL"]? || ""
     property etc_dir : String = "/etc/partiduo"
     property system_user : String = "partiduo"
     # Domaine des dossiers de ce serveur (`<sous-domaine>.<domaine>`) : les
@@ -71,7 +73,7 @@ module PartiduoAgent
     property poll_interval : Time::Span = 15.seconds
     property once : Bool = false
     # À blanc : fait échouer la première opération dont le nom contient
-    # cette valeur (specs du retour arrière et de la reprise).
+    # cette valeur (specs des échecs et de la reprise).
     property fail_on : String? = nil
 
     def self.parse(args : Array(String)) : Config
@@ -85,10 +87,12 @@ module PartiduoAgent
         parser.on("--state-dir RÉP", "état des tâches en cours (reprise)") { |value| config.state_dir = value }
         parser.on("--work-dir RÉP", "mode local : fichiers produits") { |value| config.work_dir = value }
         parser.on("--backup-dir RÉP", "répertoire des sauvegardes") { |value| config.backup_dir = value }
-        parser.on("--manage CHEMIN", "partiduo-manage de la version courante") { |value| config.manage = value }
-        parser.on("--provision CHEMIN", "partiduo-provision") { |value| config.provision = value }
-        parser.on("--releases-dir RÉP", "versions installées (<version>/bin/partiduo-manage)") { |value| config.releases_dir = value }
-        parser.on("--install-root RÉP", "racine d'installation (production)") { |value| config.install_root = value }
+        parser.on("--manage CHEMIN", "mode local : partiduo-manage du paquet app") { |value| config.manage = value }
+        parser.on("--provision CHEMIN", "mode local : partiduo-provision du paquet app") { |value| config.provision = value }
+        parser.on("--manage-devel CHEMIN", "mode local : partiduo-manage du paquet devel") { |value| config.manage_devel = value }
+        parser.on("--provision-devel CHEMIN", "mode local : partiduo-provision du paquet devel") do |value|
+          config.provision_devel = value
+        end
         parser.on("--etc-dir RÉP", "fichiers d'environnement des instances") { |value| config.etc_dir = value }
         parser.on("--system-user NOM", "compte système des instances") { |value| config.system_user = value }
         parser.on("--domain DOMAINE", "domaine des dossiers de ce serveur (obligatoire en production)") { |value| config.domain = value }
@@ -106,7 +110,7 @@ module PartiduoAgent
         parser.on("--poll SECONDES", "intervalle d'interrogation") { |value| config.poll_interval = value.to_i.seconds }
         parser.on("--once", "traite au plus une tâche puis s'arrête") { config.once = true }
         parser.on("--fail-on TEXTE", "à blanc seulement : fait échouer la première opération qui contient TEXTE " \
-                                     "(répétition d'un retour arrière)") { |value| config.fail_on = value }
+                                     "(répétition d'un échec)") { |value| config.fail_on = value }
         parser.on("-h", "--help", "cette aide") do
           puts parser
           exit 0

@@ -9,7 +9,7 @@ require "../spec_helper"
 private def params(slug = "garde", **extra) : Hash(String, JSON::Any)
   base = JSON.parse({"slug" => slug, "host" => "#{slug}.partiduo.localhost", "domain" => "partiduo.localhost",
                      "database" => "", "modules" => ["accounting", "invoicing"], "extensions" => [] of String,
-                     "version" => "0.1.0", "locale" => "fr"}.to_json).as_h
+                     "package" => "app", "locale" => "fr"}.to_json).as_h
   extra.each { |key, value| base[key.to_s] = JSON.parse(value.to_json) }
   base
 end

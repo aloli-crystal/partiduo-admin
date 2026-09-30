@@ -60,12 +60,6 @@ module PartiduoAgent
       save
     end
 
-    def reset : Nil
-      @done.clear
-      @values.clear
-      save
-    end
-
     def clear : Nil
       File.delete(@path) if File.exists?(@path)
     end

@@ -35,7 +35,7 @@ module PartiduoAdmin
       siren : String = "", vat_number : String = "",
       modules : Array(String) = ["accounting", "invoicing"], extensions : Array(String) = [] of String,
       admin_email : String = "", server_id : Int64? = nil, firm_id : Int64? = nil, payer_id : Int64? = nil,
-      version : String = "", backup_schedule : String = "daily", backup_retention_days : Int32 = 30
+      package : String = "app", backup_schedule : String = "daily", backup_retention_days : Int32 = 30
 
     EMAIL = /\A[^@\s'"]+@[^@\s'"]+\.[^@\s'"]+\z/
 
@@ -51,13 +51,12 @@ module PartiduoAdmin
       server, firm, payer = references(user, input, now, errors)
       return Outcome(Dossier).new(nil, errors) unless errors.empty? && server && firm && payer
 
-      version = input.version.presence || Release.filter(is_default: true).first.try(&.version) || ""
       dossier = Dossier.create!(
         slug: slug, label: input.label.strip, regime: input.regime, locale: input.locale,
         siren: input.siren, vat_number: input.vat_number.strip.upcase,
         modules: input.modules.uniq.join(','), extensions: input.extensions.uniq.join(','),
         admin_email: input.admin_email.strip.downcase, server: server, firm: firm, payer: payer,
-        version: version, state: "creating", backup_schedule: input.backup_schedule,
+        package: input.package, state: "creating", backup_schedule: input.backup_schedule,
         backup_retention_days: input.backup_retention_days,
       )
       params = Tasks.dossier_params(dossier)
@@ -94,11 +93,9 @@ module PartiduoAdmin
     end
 
     private def self.schedule_errors(input : DossierInput, errors : Errors) : Nil
-      # Version choisie : une version publiée, jamais une valeur libre (elle
-      # nomme le répertoire que l'exécutant met en service).
-      unless input.version.empty? || Release.filter(version: input.version).exists?
-        add(errors, "version", "admin.errors.invalid")
-      end
+      # Paquet choisi : `app` ou `devel`, jamais une valeur libre (il désigne
+      # le paquet FreeBSD qui servira l'instance).
+      add(errors, "package", "admin.errors.dossier.package") unless Protocol.valid_package?(input.package)
       add(errors, "backup_schedule", "admin.errors.invalid") unless Dossier::SCHEDULES.includes?(input.backup_schedule)
       add(errors, "backup_retention_days", "admin.errors.dossier.retention") unless (1..3650).includes?(input.backup_retention_days)
     end
@@ -294,7 +291,7 @@ module PartiduoAdmin
       copy = Dossier.create!(slug: slug, label: dossier.label, regime: dossier.regime, locale: dossier.locale,
         siren: dossier.siren, vat_number: dossier.vat_number, modules: dossier.modules, extensions: dossier.extensions,
         admin_email: dossier.admin_email, server: dossier.server!, firm: dossier.firm!, payer: dossier.payer!,
-        version: backup.version.presence || dossier.version, state: "creating",
+        package: dossier.package, version: backup.version.presence || dossier.version, state: "creating",
         backup_encryption: dossier.backup_encryption.to_s)
       params["new_slug"] = any(slug)
       params["new_host"] = any(copy.host)
@@ -313,25 +310,6 @@ module PartiduoAdmin
       return {nil, "admin.errors.encryption.key_required"} if data_key.empty?
       accepted = BackupEncryption.accept_data_key(backup, data_key)
       accepted ? {[accepted], nil} : {nil, "admin.errors.encryption.wrong_key"}
-    end
-
-    # --- Montée de version (ADR-008 D5) -------------------------------------
-
-    def self.upgrade(user : User?, dossier : Dossier, release : Release, wave : Wave? = nil, rank : Int32? = nil) : Outcome(Task)
-      if user && wave.nil? && !Access.can?(user, :upgrade, dossier)
-        return Outcome(Task).failure("base", "admin.errors.forbidden")
-      end
-      return Outcome(Task).failure("base", "admin.errors.dossier.not_active") unless dossier.state == "active"
-      return Outcome(Task).failure("release_id", "admin.errors.release.same") if dossier.version == release.version
-      settings = BackupEncryption.task_settings(dossier) || return Outcome(Task).failure("base", "admin.errors.encryption.no_key")
-      params = Tasks.dossier_params(dossier)
-      params["from_version"] = any(dossier.version)
-      params["version"] = any(release.version)
-      # Sauvegarde préalable chiffrée selon le réglage du dossier.
-      params["encryption"] = settings
-      task = Tasks.enqueue("instance.upgrade", dossier.server!, params, user, dossier, wave: wave, wave_rank: rank)
-      Audit.log(user, "dossier.upgrade", target: dossier, detail: {"from" => dossier.version.to_s, "to" => release.version.to_s})
-      Outcome(Task).new(task)
     end
   end
 

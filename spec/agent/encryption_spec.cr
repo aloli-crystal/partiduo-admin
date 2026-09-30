@@ -83,7 +83,7 @@ private class LocalBench
 
   def params(extra = {} of String => JSON::Any) : Hash(String, JSON::Any)
     base = JSON.parse({"slug" => slug, "host" => "#{slug}.partiduo.localhost", "domain" => "partiduo.localhost",
-                       "database" => database, "version" => "0.1.0"}.to_json).as_h
+                       "database" => database, "package" => "app"}.to_json).as_h
     base.merge(extra)
   end
 
@@ -278,11 +278,11 @@ describe "partiduo-agent : sauvegardes chiffrées à blanc et en production" do
     expect_raises(PartiduoAgent::StepError, /durée légale/) { system.guard_archive_removal!(path, Time.utc(2030, 1, 1)) }
   end
 
-  it "chiffre les sauvegardes d'archivage et de montée de version, et relit la sauvegarde préalable au retour arrière" do
+  it "chiffre les sauvegardes d'archivage et de sûreté, et relit l'archive chiffrée à la restauration" do
     admin = AdminSpec::FakeAdmin.new
     config = admin.config
     params = {"slug" => "demo", "host" => "demo.partiduo.localhost", "domain" => "partiduo.localhost", "database" => "",
-              "version" => "0.1.0", "encryption" => {"mode" => "server"}}
+              "package" => "app", "encryption" => {"mode" => "server"}}
     admin.push(1_i64, "instance.archive", params.merge({"reason" => "fin"}))
     runner = PartiduoAgent::Runner.new(config)
     runner.run_once
@@ -293,13 +293,15 @@ describe "partiduo-agent : sauvegardes chiffrées à blanc et en production" do
     calls = runner.last_system.as(PartiduoAgent::DrySystem).calls
     calls.should contain("déchiffrement | pg_restore --list #{report["result"]["backup"]["path"].as_s}")
 
-    config.fail_on = "instance migrate"
-    admin.push(2_i64, "instance.upgrade", params.merge({"version" => "0.2.0", "from_version" => "0.1.0"}))
+    archive = report["result"]["backup"]["path"].as_s
+    admin.push(2_i64, "backup.restore", params.merge({"target" => "replace", "path" => archive,
+                                                      "backup_encryption" => {"mode" => "server"}}))
     runner.run_once
-    upgrade = admin.finished[2_i64]
-    upgrade["result"]["rolled_back"].as_bool.should be_true
-    upgrade["result"]["backup"]["path"].as_s.should end_with(".dump.enc")
-    runner.last_system.as(PartiduoAgent::DrySystem).calls.any?(&.starts_with?("déchiffrement | pg_restore")).should be_true
+    restored = admin.finished[2_i64]
+    restored["ok"].as_bool.should be_true, restored.to_json
+    restored["result"]["safety_backup"]["path"].as_s.should end_with(".dump.enc")
+    restored["result"]["safety_backup"]["path"].as_s.should contain("pre-restore")
+    runner.last_system.as(PartiduoAgent::DrySystem).calls.should contain("déchiffrement | pg_restore #{archive} partiduo_adm_demo")
   ensure
     admin.try(&.close)
   end

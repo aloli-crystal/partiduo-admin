@@ -33,9 +33,7 @@ module PartiduoAdmin
       when Firm     then {"firm", id, target.name.to_s, id}
       when Payer    then {"payer", id, target.name.to_s, target.firm_id.as?(Int64)}
       when Server   then {"server", id, target.name.to_s, nil}
-      when Release  then {"release", id, target.version.to_s, nil}
       when Task     then {"task", id, target.kind.to_s, target.dossier.try(&.firm_id).as?(Int64)}
-      when Wave     then {"wave", id, target.release.try(&.version).to_s, nil}
       when Approval then {"approval", id, target.reference.to_s, target.dossier.try(&.firm_id).as?(Int64)}
       else               {"", nil, "", nil}
       end

@@ -21,8 +21,7 @@ module PartiduoAdmin
     # (même type, même dossier, mêmes paramètres) encore en attente ou en
     # cours est rendue au lieu d'en créer une seconde.
     def self.enqueue(kind : String, server : Server, params : Params, requested_by : User? = nil,
-                     dossier : Dossier? = nil, wave : Wave? = nil, wave_rank : Int32? = nil,
-                     requested_by_label : String? = nil, data_keys : Array(String)? = nil) : Task
+                     dossier : Dossier? = nil, requested_by_label : String? = nil, data_keys : Array(String)? = nil) : Task
       raise ArgumentError.new("type de tâche inconnu : #{kind}") unless Protocol.valid_kind?(kind)
       serialized = params.to_json
       secrets = data_keys ? data_keys.to_json : ""
@@ -39,7 +38,7 @@ module PartiduoAdmin
       end
       task = Task.create!(kind: kind, server: server, dossier: dossier, params: serialized,
         requested_by_id: requested_by.try(&.pk), requested_by_label: requested_by_label || requested_by.try(&.email.to_s) || "system",
-        wave: wave, wave_rank: wave_rank, data_keys: secrets)
+        data_keys: secrets)
       Audit.log(requested_by, "task.enqueue", target: task,
         detail: {"kind" => kind, "dossier" => dossier.try(&.slug).to_s}, actor_label: requested_by ? nil : "system")
       task
@@ -54,7 +53,8 @@ module PartiduoAdmin
         "database"   => any(dossier.database),
         "modules"    => any(dossier.module_list),
         "extensions" => any(dossier.extension_list),
-        "version"    => any(dossier.version),
+        # Paquet FreeBSD qui sert l'instance (`app` ou `devel`).
+        "package" => any(dossier.package),
         # Langue du courriel d'invitation quand le serveur le remet lui-même
         # (D-CRA-003).
         "locale" => any(dossier.locale.to_s),

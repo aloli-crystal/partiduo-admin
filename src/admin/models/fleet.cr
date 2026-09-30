@@ -33,21 +33,16 @@ module PartiduoAdmin
     end
   end
 
-  # Version publiée de partiduo-app, déployable sur le parc.
-  class Release < Marten::Model
-    field :id, :big_int, primary_key: true, auto: true
-    field :version, :string, max_size: 32, unique: true
-    field :notes, :text, blank: true, default: ""
-    field :is_default, :bool, default: false
-    field :created_at, :date_time, auto_now_add: true
-  end
-
   # Dossier (inventaire, ADR-001 D2) : une instance, sa base, son URL. Aucune
   # donnée comptable (ADR-008 D3) : `label` est la raison sociale transmise au
   # provisionnement, rien de plus.
   class Dossier < Marten::Model
     STATES    = %w[creating active suspended archived deleted error]
     SCHEDULES = %w[daily weekly none]
+    # Paquet FreeBSD qui sert l'instance : `app` (`partiduo-app`) ou `devel`
+    # (`partiduo-app-devel`). Leur mise à jour relève de beryl ; l'instance
+    # se migre à son démarrage.
+    PACKAGES = Protocol::PACKAGES
 
     field :id, :big_int, primary_key: true, auto: true
     field :slug, :string, max_size: 40, unique: true
@@ -62,6 +57,8 @@ module PartiduoAdmin
     field :server, :many_to_one, to: PartiduoAdmin::Server, on_delete: :protect
     field :firm, :many_to_one, to: PartiduoAdmin::Firm, on_delete: :protect
     field :payer, :many_to_one, to: PartiduoAdmin::Payer, on_delete: :protect
+    field :package, :string, max_size: 8, default: "app"
+    # Version relevée sur l'instance (création, restauration), affichée.
     field :version, :string, max_size: 32, blank: true, default: ""
     field :database, :string, max_size: 63, blank: true, default: ""
     field :state, :string, max_size: 16, default: "creating"
@@ -99,6 +96,15 @@ module PartiduoAdmin
 
     def schedule_key : String
       "admin.schedules.#{backup_schedule}"
+    end
+
+    def package_key : String
+      "admin.packages.#{package}"
+    end
+
+    # Nom du paquet FreeBSD : `partiduo-app` ou `partiduo-app-devel`.
+    def package_name : String
+      package == "devel" ? "partiduo-app-devel" : "partiduo-app"
     end
 
     # Chiffrement effectif des prochaines sauvegardes : celui du dossier,
@@ -161,24 +167,6 @@ module PartiduoAdmin
     db_unique_constraint :admin_assignment_unique, field_names: [:user, :dossier]
   end
 
-  # Montée de version par vagues (ADR-008 D5) : `batch_size` dossiers à la
-  # fois ; la vague s'arrête au premier échec.
-  class Wave < Marten::Model
-    STATES = %w[running done failed cancelled]
-
-    field :id, :big_int, primary_key: true, auto: true
-    field :release, :many_to_one, to: PartiduoAdmin::Release, on_delete: :protect
-    field :batch_size, :int, default: 1
-    field :state, :string, max_size: 16, default: "running"
-    field :requested_by_id, :big_int, null: true, blank: true
-    field :created_at, :date_time, auto_now_add: true
-    field :finished_at, :date_time, null: true, blank: true
-
-    def state_key : String
-      "admin.waves.states.#{state}"
-    end
-  end
-
   # Tâche de la file (ADR-008 D4) : type de la liste fermée, dossier,
   # paramètres JSON, demandeur, état, journal renvoyé par l'exécutant.
   class Task < Marten::Model
@@ -191,8 +179,6 @@ module PartiduoAdmin
     field :requested_by_label, :string, max_size: 255, blank: true, default: ""
     field :state, :string, max_size: 16, default: "pending"
     field :attempts, :int, default: 0
-    field :wave, :many_to_one, to: PartiduoAdmin::Wave, null: true, blank: true, on_delete: :protect
-    field :wave_rank, :int, null: true, blank: true
     field :claimed_at, :date_time, null: true, blank: true
     field :lease_until, :date_time, null: true, blank: true
     field :started_at, :date_time, null: true, blank: true
@@ -263,7 +249,7 @@ module PartiduoAdmin
   # pièces jointes, empreinte SHA-256. `frozen` : archive de fin de vie,
   # conservée dix ans et jamais élaguée.
   class Backup < Marten::Model
-    KINDS  = %w[scheduled manual pre_upgrade pre_restore archive]
+    KINDS  = %w[scheduled manual pre_restore archive]
     STATES = %w[pending done verified failed pruned]
 
     field :id, :big_int, primary_key: true, auto: true

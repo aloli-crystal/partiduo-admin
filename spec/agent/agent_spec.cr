@@ -8,9 +8,9 @@ private def run_one(admin : AdminSpec::FakeAdmin, config : PartiduoAgent::Config
   runner
 end
 
-private def dossier_params(slug = "demo", version = "0.1.0")
+private def dossier_params(slug = "demo", package = "app")
   {"slug" => slug, "host" => "#{slug}.partiduo.localhost", "domain" => "partiduo.localhost", "database" => "",
-   "modules" => ["accounting", "invoicing"], "extensions" => [] of String, "version" => version}
+   "modules" => ["accounting", "invoicing"], "extensions" => [] of String, "package" => package}
 end
 
 describe PartiduoAgent do
@@ -97,26 +97,29 @@ describe PartiduoAgent do
     admin.try(&.close)
   end
 
-  it "monte de version et revient en arrière si la migration échoue" do
+  it "crée une instance servie par le paquet devel, interrogée par l'outil de ce paquet" do
     admin = AdminSpec::FakeAdmin.new
-    config = admin.config
-    config.fail_on = "instance migrate"
-    admin.push(5_i64, "instance.upgrade", dossier_params.merge({"version" => "0.2.0", "from_version" => "0.1.0"}))
-    runner = run_one(admin, config)
+    params = dossier_params("essai", "devel").merge({"name" => "Essai", "regime" => "fr", "locale" => "fr",
+                                                     "admin_email" => "patron@essai.fr", "siren" => "", "vat" => ""})
+    admin.push(5_i64, "instance.create", params)
+    runner = run_one(admin, admin.config)
     report = admin.finished[5_i64]
-    report["ok"].as_bool.should be_false
-    report["result"]["rolled_back"].as_bool.should be_true
+    report["ok"].as_bool.should be_true, report.to_json
     report["result"]["version"].should eq("0.1.0")
-    report["result"]["backup"]["path"].as_s.should contain("pre-upgrade")
-    calls = runner.last_system.as(PartiduoAgent::DrySystem).calls
-    calls.should contain("release demo 0.1.0")
-    calls.any?(&.starts_with?("pg_restore")).should be_true
-    calls.last.should eq("service start demo")
+    dry = runner.last_system.as(PartiduoAgent::DrySystem)
+    dry.packages["essai"].should eq("devel")
+    dry.calls.should contain("partiduo-provision essai partiduo_adm_essai devel")
+  ensure
+    admin.try(&.close)
+  end
 
+  it "ne connaît plus de montée de version : la mise à jour des paquets relève de beryl" do
+    admin = AdminSpec::FakeAdmin.new
     admin.push(6_i64, "instance.upgrade", dossier_params.merge({"version" => "0.2.0", "from_version" => "0.1.0"}))
-    runner.run_once
-    admin.finished[6_i64]["ok"].as_bool.should be_true
-    admin.finished[6_i64]["result"]["version"].should eq("0.2.0")
+    runner = run_one(admin, admin.config)
+    admin.finished[6_i64]["ok"].as_bool.should be_false
+    admin.finished[6_i64]["error"].as_s.should contain("type de tâche refusé")
+    runner.last_system.as(PartiduoAgent::DrySystem).calls.should be_empty
   ensure
     admin.try(&.close)
   end

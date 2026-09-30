@@ -41,6 +41,9 @@ nl:
       daily: "dagelijks"
       weekly: "wekelijks"
       none: "geen"
+    packages:
+      app: "partiduo-app (productie)"
+      devel: "partiduo-app-devel (ontwikkeling)"
     modules:
       accounting: "Boekhouding"
       invoicing: "Facturatie"
@@ -139,6 +142,7 @@ nl:
         server: "Server"
         firm: "Beherende structuur"
         payer: "Opdrachtgever"
+        package: "Pakket"
         version: "Versie"
         state: "Toestand"
         host: "Adres"
@@ -151,6 +155,7 @@ nl:
         extensions: "Codes gescheiden door komma's (einvoicing, superpdp…)."
         admin_email: "Ontvangt de uitnodiging als beheerder van het dossier."
         payer: "Wie het dossier bestelt en betaalt: verplicht."
+        package: "FreeBSD-pakket dat het dossier bedient; beryl werkt het bij op alle servers, en het dossier migreert zichzelf bij het opstarten."
         modules_kept: "Een module uitschakelen bewaart haar gegevens, alleen-lezen."
       states:
         creating: "wordt aangemaakt"
@@ -182,8 +187,6 @@ nl:
       archive_help: "Bevroren en gecontroleerde back-up, instantie gestopt, archief tien jaar bewaard."
       restore_archive: "Archief terugzetten"
       restore: "Terugzetten naar een datum"
-      upgrade: "Naar een nieuwe versie"
-      upgrade_help: "Automatische back-up vooraf; terugdraaien als de migratie mislukt."
       delete: "Definitieve verwijdering"
       delete_help: "Alleen na de wettelijke bewaartermijn, beslist door één of twee personen volgens de instelling van de structuur."
       access: "Toegangsherstel"
@@ -208,7 +211,6 @@ nl:
       kinds:
         scheduled: "gepland"
         manual: "handmatig"
-        pre_upgrade: "vóór versie-update"
         pre_restore: "vóór terugzetting"
         archive: "archief"
       states:
@@ -397,7 +399,6 @@ nl:
       cancel: "Annuleren"
       enqueued: "Taak in de wachtrij."
       states:
-        waiting: "tegengehouden"
         pending: "wachtend"
         running: "bezig"
         succeeded: "geslaagd"
@@ -411,7 +412,6 @@ nl:
         instance_archive: "archivering"
         instance_restore_archive: "terugzetten van het archief"
         instance_delete: "definitieve verwijdering"
-        instance_upgrade: "versie-update"
         instance_admin_invite: "toegangsherstel"
         backup_run: "back-up"
         backup_prune: "opruimen van back-ups"
@@ -434,7 +434,6 @@ nl:
         le_quota: "Let's Encrypt-quotum"
         agent_silent: "uitvoerder stil"
         test_restore_failed: "testherstel mislukt"
-        wave_failed: "update-golf gestopt"
         mail_failed: "uitnodigingsmail niet verzonden"
     quota:
       title: "Let's Encrypt-quotum"
@@ -515,26 +514,6 @@ nl:
       token_title: "Token van de uitvoerder"
       token_once: "Dit token wordt niet meer getoond. Kopieer het in het tokenbestand van partiduo-agent op de server."
       token_help: "De uitvoerder toont het bij elke oproep (Authorization: Bearer). Een nieuw token trekt het vorige in."
-    releases:
-      title: "Versies"
-      new: "Nieuwe versie"
-      version: "Versie"
-      notes: "Notities"
-      is_default: "Standaard voor nieuwe dossiers"
-      default: "Standaardversie"
-      none: "Geen andere versie gepubliceerd."
-    waves:
-      title: "Update-golven"
-      start: "Een golf starten"
-      started: "Golf gestart."
-      batch_size: "Dossiers per groep"
-      none: "Geen golf."
-      help: "Actieve dossiers worden groep per groep bijgewerkt, elk met een back-up vooraf; de golf stopt bij de eerste mislukking."
-      states:
-        running: "bezig"
-        done: "voltooid"
-        failed: "gestopt na mislukking"
-        cancelled: "geannuleerd"
     audit:
       title: "Auditlogboek"
       none: "Geen regel."
@@ -597,6 +576,7 @@ nl:
         locale: "Onbekende taal."
         modules: "Kies minstens één van de officiële modules."
         extensions: "Ongeldige extensiecode."
+        package: "Onbekend pakket: partiduo-app of partiduo-app-devel."
         payer_required: "De opdrachtgever is verplicht."
         payer_scope: "Deze opdrachtgever hoort bij een ander kantoor."
         quota: "Let's Encrypt-quotum van het domein bereikt (50 certificaten per week): aanmaak nu onmogelijk."
@@ -624,11 +604,6 @@ nl:
         public_key: "Publieke sleutel geweigerd: PEM „PUBLIC KEY”, RSA van minstens 3072 bits."
         key_required: "Deze back-up is met de kantoorsleutel versleuteld: geef de kantoorsleutel op."
         wrong_key: "Deze sleutel ontsleutelt de back-up niet."
-      release:
-        same: "Het dossier heeft deze versie al."
-        taken: "Deze versie bestaat al."
-      wave:
-        nothing: "Geen actief dossier om naar deze versie bij te werken."
       task:
         state: "Actie onmogelijk in de toestand van de taak."
       user:

@@ -41,6 +41,9 @@ en:
       daily: "daily"
       weekly: "weekly"
       none: "none"
+    packages:
+      app: "partiduo-app (production)"
+      devel: "partiduo-app-devel (development)"
     modules:
       accounting: "Accounting"
       invoicing: "Invoicing"
@@ -139,6 +142,7 @@ en:
         server: "Server"
         firm: "Managing organisation"
         payer: "Payer"
+        package: "Package"
         version: "Version"
         state: "State"
         host: "Address"
@@ -151,6 +155,7 @@ en:
         extensions: "Comma-separated codes (einvoicing, superpdp…)."
         admin_email: "Receives the file administrator invitation."
         payer: "Who orders and pays for the file: required."
+        package: "FreeBSD package that will serve the company file; beryl updates it on every server, and the company file migrates itself when it starts."
         modules_kept: "Disabling a module keeps its data, read-only."
       states:
         creating: "being created"
@@ -182,8 +187,6 @@ en:
       archive_help: "Frozen, verified backup, instance stopped, archive kept for ten years."
       restore_archive: "Restore the archive"
       restore: "Restore to a date"
-      upgrade: "Upgrade"
-      upgrade_help: "Automatic backup first; rollback if the migration fails."
       delete: "Permanent deletion"
       delete_help: "Only after the legal retention period, decided by one or two people depending on the organisation's setting."
       access: "Access recovery"
@@ -208,7 +211,6 @@ en:
       kinds:
         scheduled: "scheduled"
         manual: "manual"
-        pre_upgrade: "before upgrade"
         pre_restore: "before restore"
         archive: "archive"
       states:
@@ -397,7 +399,6 @@ en:
       cancel: "Cancel"
       enqueued: "Task queued."
       states:
-        waiting: "held"
         pending: "pending"
         running: "running"
         succeeded: "succeeded"
@@ -411,7 +412,6 @@ en:
         instance_archive: "archiving"
         instance_restore_archive: "archive restore"
         instance_delete: "permanent deletion"
-        instance_upgrade: "upgrade"
         instance_admin_invite: "access recovery"
         backup_run: "backup"
         backup_prune: "backup pruning"
@@ -434,7 +434,6 @@ en:
         le_quota: "Let's Encrypt quota"
         agent_silent: "agent silent"
         test_restore_failed: "test restore failed"
-        wave_failed: "upgrade wave stopped"
         mail_failed: "invitation email not sent"
     quota:
       title: "Let's Encrypt quota"
@@ -515,26 +514,6 @@ en:
       token_title: "Agent token"
       token_once: "This token will not be shown again. Copy it into the partiduo-agent token file on the server."
       token_help: "The agent presents it on every call (Authorization: Bearer). A new token revokes the previous one."
-    releases:
-      title: "Releases"
-      new: "New release"
-      version: "Version"
-      notes: "Notes"
-      is_default: "Default for new company files"
-      default: "Default release"
-      none: "No other release published."
-    waves:
-      title: "Upgrade waves"
-      start: "Start a wave"
-      started: "Wave started."
-      batch_size: "Files per batch"
-      none: "No wave."
-      help: "Active company files are upgraded batch by batch, each with a prior backup; the wave stops at the first failure."
-      states:
-        running: "running"
-        done: "done"
-        failed: "stopped on failure"
-        cancelled: "cancelled"
     audit:
       title: "Audit log"
       none: "No entry."
@@ -597,6 +576,7 @@ en:
         locale: "Unknown language."
         modules: "Choose at least one of the official modules."
         extensions: "Invalid extension code."
+        package: "Unknown package: partiduo-app or partiduo-app-devel."
         payer_required: "The payer is required."
         payer_scope: "This payer belongs to another firm."
         quota: "Let's Encrypt quota of the domain reached (50 certificates per week): creation impossible for now."
@@ -624,11 +604,6 @@ en:
         public_key: "Public key refused: PEM \"PUBLIC KEY\", RSA of at least 3072 bits."
         key_required: "This backup is encrypted with the firm key: provide the firm key."
         wrong_key: "This key does not decrypt the backup."
-      release:
-        same: "The company file already runs this version."
-        taken: "This release already exists."
-      wave:
-        nothing: "No active company file to upgrade to this release."
       task:
         state: "Action impossible in the task's state."
       user:

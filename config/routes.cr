@@ -56,8 +56,6 @@ Marten.routes.draw do
   path "/users/<id:int>/<command:str>", PartiduoAdmin::UserCommandHandler, name: "user_command"
   path "/servers", PartiduoAdmin::ServersHandler, name: "servers"
   path "/servers/<id:int>/rotate", PartiduoAdmin::ServerRotateHandler, name: "server_rotate"
-  path "/releases", PartiduoAdmin::ReleasesHandler, name: "releases"
-  path "/waves", PartiduoAdmin::WaveStartHandler, name: "wave_start"
 
   # API de l'exécutant (ADR-008 D4).
   path "/api/agent/v1/claim", PartiduoAdmin::AgentClaimHandler, name: "agent_claim"

@@ -93,6 +93,40 @@ describe "Interface de l'administration" do
     created = browser.post("/dossiers/new", data.merge({"payer_id" => payer.pk.to_s}))
     created.status.should eq(302)
     PartiduoAdmin::Dossier.get!(slug: "formulaire").payer_id.should eq(payer.pk)
+    # Sans choix : le paquet de production.
+    PartiduoAdmin::Dossier.get!(slug: "formulaire").package.should eq("app")
+  end
+
+  it "choisit le paquet à la création et l'affiche sur la fiche et dans la liste" do
+    firm = AdminSpec.firm
+    server, _ = AdminSpec.server
+    payer = AdminSpec.payer(firm)
+    browser = AdminSpec::Browser.new(token: AdminSpec.session(AdminSpec.user(PartiduoAdmin::Config::FIRM_ADMIN, firm)))
+    form = browser.get("/dossiers/new").html
+    form.should contain(%(name="package"))
+    form.should contain("partiduo-app (production)")
+    form.should contain("partiduo-app-devel (développement)")
+    form.should_not contain(%(name="version"))
+    data = {"slug" => "essai-devel", "label" => "Essai SAS", "regime" => "fr", "locale" => "fr",
+            "modules" => ["accounting"], "admin_email" => "gerant@essai.fr", "server_id" => server.pk.to_s,
+            "payer_id" => payer.pk.to_s, "package" => "beta", "backup_schedule" => "daily", "backup_retention_days" => "30"}
+    refused = browser.post("/dossiers/new", data)
+    refused.status.should eq(422)
+    refused.html.should contain("Paquet inconnu")
+    browser.post("/dossiers/new", data.merge({"package" => "devel"})).status.should eq(302)
+    dossier = PartiduoAdmin::Dossier.get!(slug: "essai-devel")
+    dossier.package.should eq("devel")
+    PartiduoAdmin::Task.get!(dossier_id: dossier.pk).params_json["package"].should eq("devel")
+    browser.get("/dossiers/#{dossier.pk}").html.should contain("partiduo-app-devel (développement)")
+    browser.get("/dossiers").html.should contain("partiduo-app-devel")
+  end
+
+  it "ne propose plus de versions ni de vagues" do
+    browser = AdminSpec::Browser.new(token: AdminSpec.session(AdminSpec.super_admin))
+    browser.get("/").html.should_not contain(%(href="/releases"))
+    %w[/releases /waves].each do |path|
+      expect_raises(Marten::Routing::Errors::NoResolveMatch) { Marten.routes.resolve(path) }
+    end
   end
 
   it "exporte les dossiers par donneur d'ordre en CSV, dans la portée" do
@@ -131,11 +165,10 @@ describe "Interface de l'administration" do
     dossier = AdminSpec.dossier(firm, server)
     AdminSpec.backup(dossier)
     task = PartiduoAdmin::Fleet.backup_now(nil, dossier).value!
-    PartiduoAdmin::Release.create!(version: "0.9.0")
     browser = AdminSpec::Browser.new("en", token: AdminSpec.session(AdminSpec.super_admin))
     ["/", "/dossiers", "/dossiers/#{dossier.pk}", "/dossiers/#{dossier.pk}/modules", "/dossiers/new", "/approvals",
      "/tasks", "/tasks/#{task.pk}", "/alerts", "/audit", "/payers", "/payers/new", "/payers/dossiers", "/firms",
-     "/users", "/users/new", "/servers", "/releases", "/account"].each do |path|
+     "/users", "/users/new", "/servers", "/account"].each do |path|
       response = browser.get(path)
       {path, response.status}.should eq({path, 200})
     end

@@ -3,9 +3,9 @@ version: 0.1.0
 
 description: |
   Administration du parc de dossiers Partiduo (ADR-008) : cabinets,
-  utilisateurs d'administration, donneurs d'ordre, inventaire des dossiers,
-  serveurs, file de tâches, sauvegardes, versions, supervision et journal
-  d'audit ; exécutant `partiduo-agent` installé sur chaque serveur. Aucun
+  utilisateurs d'administration, donneurs d'ordre, inventaire des dossiers
+  et de leur paquet, serveurs, file de tâches, sauvegardes, supervision et
+  journal d'audit ; exécutant `partiduo-agent` installé sur chaque serveur. Aucun
   accès aux données comptables des dossiers (ADR-008 D3).
 
 authors:
