@@ -330,7 +330,7 @@ describe "partiduo-agent : sauvegardes chiffrées à blanc et en production" do
     config.backup_dir = File.join(Dir.tempdir, "partiduo-chf-prod-#{Random::Secure.hex(4)}")
     streams = [] of Array(String)
     system = StreamRecordingProduction.new(config, ->(_line : String) { nil }, streams)
-    helper = ["sudo", "-n", "-u", "partiduo", "/usr/local/libexec/partiduo-agent/partiduo-agent-instance"]
+    helper = ["/usr/local/bin/sudo", "-n", "-u", "partiduo", "/usr/local/libexec/partiduo-agent/partiduo-agent-instance"]
     root = system.backup_root("garde")
     sealer = Crypto::Sealer.server(Crypto::ServerKey.new(Crypto.random_key))
     system.pg_dump_sealed("partiduo_garde", File.join(root, "b.dump.enc"), sealer)

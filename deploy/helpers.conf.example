@@ -1,23 +1,29 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
-# /etc/partiduo-agent/helpers.conf — configuration des scripts enveloppes de
-# l'exécutant (deploy/libexec/, D-AFN-002). Possédée par root, mode 0644 :
-# les enveloppes refusent de démarrer sinon. Mêmes valeurs que
-# deploy/fleet.conf de partiduo-app ; DOMAIN = --domain de partiduo-agent.
+# /usr/local/etc/partiduo-agent/helpers.conf — configuration des scripts
+# enveloppes de l'exécutant (deploy/libexec/, D-AFN-002), serveur FreeBSD.
+# Possédée par root, mode 0644 : les enveloppes refusent de démarrer sinon.
+# Mêmes valeurs que partiduo-provision (paquets partiduo-app et
+# partiduo-app-devel) ; DOMAIN = --domain de partiduo-agent. Valeurs
+# commentées : celles par défaut.
 DOMAIN=partiduo.app
-INSTALL_ROOT=/opt/partiduo
-ETC_DIR=/etc/partiduo
+# Environnement et données des instances : ceux que lit le script rc.d des
+# paquets (partiduo, partiduo_devel) ; ne pas les changer.
+#ETC_DIR=/usr/local/etc/partiduo
+#DATA_DIR=/var/db/partiduo
 # Compte système des instances et rôle PostgreSQL propriétaire des bases
 # (même nom : authentification « peer » par le socket Unix).
-SYSTEM_USER=partiduo
-PG_OWNER=partiduo
-PG_SOCKET=/var/run/postgresql
-# partiduo:partiduo-agent, mode 2770 : les deux comptes y écrivent.
-BACKUP_DIR=/var/backups/partiduo
-# Fichiers produits par partiduo-provision (compte des instances).
-STAGE_DIR=/var/lib/partiduo/stage
-# Gabarits de l'unité systemd et des vhosts : copie possédée par root de
-# deploy/templates/ de partiduo-app, jamais celle d'une version installée.
-TEMPLATES_DIR=/usr/local/libexec/partiduo-agent/templates
+#SYSTEM_USER=partiduo
+#PG_OWNER=partiduo
+#PG_SOCKET=/tmp
+# partiduo:partiduo-agent, mode 0770 : les deux comptes y écrivent (les
+# répertoires des dossiers héritent du groupe, règle BSD).
+#BACKUP_DIR=/var/backups/partiduo
+# Fichiers produits par partiduo-provision (compte des instances,
+# partiduo:partiduo 0750), relus par root à l'installation.
+#STAGE_DIR=/var/db/partiduo-stage
+# Certificats Let's Encrypt (certbot, défi HTTP-01).
 ACME_EMAIL=
-ACME_WEBROOT=/var/www/letsencrypt
-ACME_STAGING=0
+#ACME_WEBROOT=/usr/local/www/letsencrypt
+#ACME_STAGING=0
+# Gabarits : ceux du paquet de l'instance
+# (/usr/local/lib/partiduo[-devel]/deploy/templates), pas de réglage.

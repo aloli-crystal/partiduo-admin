@@ -221,7 +221,7 @@ module PartiduoAgent
         end
       end
       ctx.step("installation") do
-        ctx.journal["certificate"] = system.install_instance(ctx.slug, host).to_s
+        ctx.journal["certificate"] = system.install_instance(ctx.slug, host, package).to_s
       end
       status = ctx.instance!("status", package: package, database: database)
       raise StepError.new("instance non provisionnée après création", "refused") unless status["provisioned"]?.try(&.as_bool?)
@@ -703,7 +703,7 @@ module PartiduoAgent
       end
       ctx.step("fichiers de service") { system.provision_files(new_slug, ctx.domain, ctx.params, database) }
       ctx.step("installation") do
-        ctx.journal["certificate"] = system.install_instance(new_slug, host).to_s
+        ctx.journal["certificate"] = system.install_instance(new_slug, host, ctx.package.presence || "app").to_s
       end
       ctx.step("pièces jointes") { system.restore_media(new_slug, media, ctx.keyring) unless media.empty? }
       ctx.set("database", database)

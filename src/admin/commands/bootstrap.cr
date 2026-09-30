@@ -69,8 +69,8 @@ module PartiduoAdmin
     end
 
     # `manage schedule` : planification, à lancer toutes les quinze minutes
-    # (minuteur systemd) — sauvegardes planifiées, élagage, restaurations
-    # test, supervision, alertes (ADR-008 D5).
+    # (cron, /usr/local/etc/cron.d/partiduo-admin) — sauvegardes planifiées,
+    # élagage, restaurations test, supervision, alertes (ADR-008 D5).
     class Schedule < Marten::CLI::Manage::Command::Base
       command_name :schedule
       help "Planifie sauvegardes, élagages, restaurations test et supervision (ADR-008 D5)."

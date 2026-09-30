@@ -88,7 +88,7 @@ module PartiduoAgent
     # (restauration dans une instance neuve) : `partiduo-provision
     # --files-only`, nouveau port et nouvelle clé secrète.
     abstract def provision_files(slug : String, domain : String, params : JSON::Any, database : String) : String
-    abstract def install_instance(slug : String, host : String) : Bool
+    abstract def install_instance(slug : String, host : String, package : String) : Bool
     # Interface en ligne de commande d'une instance. `package` (`app` ou
     # `devel`) : paquet dont l'outil `manage` est pris, seulement pour une
     # instance pas encore déclarée (création, instance neuve d'une
@@ -299,7 +299,7 @@ module PartiduoAgent
       "== Instance #{slug} provisionnée.\n"
     end
 
-    def install_instance(slug : String, host : String) : Bool
+    def install_instance(slug : String, host : String, package : String) : Bool
       op("install", host)
       false
     end
@@ -476,7 +476,7 @@ module PartiduoAgent
   end
 
   # Mode local : vraies bases `partiduo_adm_*` et vrais outils PostgreSQL,
-  # sans vhost, systemd ni Let's Encrypt — les fichiers de service sont
+  # sans vhost, service rc.d ni Let's Encrypt — les fichiers de service sont
   # produits dans `work_dir`, et l'arrêt d'un service est un fichier témoin.
   class LocalSystem < System
     DATABASE = /\A[a-z_][a-z0-9_]{0,62}\z/
@@ -600,8 +600,8 @@ module PartiduoAgent
     end
 
     # Mode local : rien n'est installé ; les fichiers restent dans work_dir.
-    def install_instance(slug : String, host : String) : Bool
-      log("mode local : fichiers de service laissés dans #{instance_dir(slug)} (ni systemd, ni vhost, ni certificat)")
+    def install_instance(slug : String, host : String, package : String) : Bool
+      log("mode local : fichiers de service laissés dans #{instance_dir(slug)} (ni service rc.d, ni vhost, ni certificat)")
       false
     end
 
@@ -911,12 +911,13 @@ module PartiduoAgent
     end
   end
 
-  # Production : tout geste privilégié passe par deux scripts enveloppes
-  # possédés par root (`deploy/libexec/`, D-AFN-002), seuls permis par
-  # sudoers et qui valident eux-mêmes leurs arguments :
+  # Production (serveur FreeBSD) : tout geste privilégié passe par deux
+  # scripts enveloppes possédés par root (`deploy/libexec/`, D-AFN-002),
+  # seuls permis par sudoers et qui valident eux-mêmes leurs arguments :
   #
   # * `partiduo-agent-root` (en root) : installation et retrait d'une
-  #   instance, démarrage et arrêt de son service, certificat ;
+  #   instance, démarrage, arrêt et état de son service (service(8)),
+  #   certificat ;
   # * `partiduo-agent-instance` (sous le compte des instances) : interface
   #   d'instance, `partiduo-provision`, bases (création, suppression,
   #   `pg_dump`, `pg_restore`), pièces jointes.
@@ -925,8 +926,12 @@ module PartiduoAgent
   # (`partiduo`), celui qui les fait tourner (D-AFN-005). L'exécutant ne
   # passe que des valeurs : sous-domaine, nom de base, paquet, chemins sous
   # le répertoire des sauvegardes ; les enveloppes calculent le reste de
-  # leur propre configuration (`/etc/partiduo-agent/helpers.conf`).
+  # leur propre configuration (`/usr/local/etc/partiduo-agent/helpers.conf`).
   class ProductionSystem < LocalSystem
+    # sudo du paquet security/sudo, par son chemin : l'exécutant ne dépend
+    # pas de son PATH.
+    SUDO = "/usr/local/bin/sudo"
+
     def root_helper : String
       File.join(config.helpers_dir, "partiduo-agent-root")
     end
@@ -936,15 +941,11 @@ module PartiduoAgent
     end
 
     def as_root(args : Array(String)) : Array(String)
-      ["sudo", "-n", root_helper] + args
+      [SUDO, "-n", root_helper] + args
     end
 
     def as_instance(args : Array(String)) : Array(String)
-      ["sudo", "-n", "-u", config.system_user, instance_helper] + args
-    end
-
-    def instances_dir : String
-      File.join(config.state_dir, "instances")
+      [SUDO, "-n", "-u", config.system_user, instance_helper] + args
     end
 
     private def guard_slug!(slug : String) : Nil
@@ -994,10 +995,14 @@ module PartiduoAgent
       ["--package", System.package_of(params)]
     end
 
-    def install_instance(slug : String, host : String) : Bool
+    # Paquet de l'instance neuve (création, restauration en instance
+    # neuve) ; l'enveloppe refuse un paquet contraire à la déclaration de
+    # l'instance dans rc.conf.
+    def install_instance(slug : String, host : String, package : String) : Bool
       guard_slug!(slug)
+      raise StepError.new("paquet invalide : #{package}", "usage") unless PartiduoAdmin::Protocol.valid_package?(package)
       before = cert_exists?(host)
-      run!(as_root(["install", slug]))
+      run!(as_root(["install", slug, package]))
       !before && cert_exists?(host) && !config.acme_staging
     end
 
@@ -1006,7 +1011,9 @@ module PartiduoAgent
       code == 0
     end
 
-    # `-` pour le paquet : l'enveloppe prend celui qui sert déjà l'instance.
+    # `-` pour le paquet : l'enveloppe prend celui qui sert déjà l'instance
+    # (sa déclaration dans rc.conf) ; un paquet explicite doit lui être
+    # conforme, ou désigner celui d'une instance pas encore déclarée.
     def instance(slug : String, action : String, args : Array(String), package : String? = nil,
                  database : String? = nil) : InstanceReply
       guard_slug!(slug)
@@ -1019,10 +1026,14 @@ module PartiduoAgent
       InstanceReply.new(code, JSON.parse(reply_line(output, errors)))
     end
 
+    # start, stop : `service partiduo[_devel] start|stop <slug>` par
+    # l'enveloppe racine ; puis l'état, par le code de sortie de
+    # `service … status <slug>` (0 : l'instance tourne).
     def service(slug : String, command : String) : String
       guard_slug!(slug)
+      raise StepError.new("commande refusée : #{command}", "usage") unless %w[start stop status].includes?(command)
       run!(as_root(["service", slug, command])) unless command == "status"
-      code, _, _ = run(["systemctl", "is-active", "--quiet", "partiduo-#{slug}.service"], quiet: true)
+      code, _, _ = run(as_root(["service", slug, "status"]), quiet: true)
       code == 0 ? "running" : "stopped"
     end
 

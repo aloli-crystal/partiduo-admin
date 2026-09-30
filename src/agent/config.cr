@@ -11,9 +11,10 @@ module PartiduoAgent
   # * `dry-run` (à blanc) : rien n'est exécuté ; chaque geste est simulé et
   #   inscrit au journal renvoyé à l'admin (specs, répétition) ;
   # * `local` : développement — opère réellement sur des bases
-  #   `partiduo_adm_*` de la machine, sans vhost, systemd ni Let's Encrypt :
-  #   les fichiers de service sont produits dans `work_dir` ;
-  # * `production` : serveur d'hébergement (sudo, systemctl, certbot).
+  #   `partiduo_adm_*` de la machine, sans vhost, service rc.d ni Let's
+  #   Encrypt : les fichiers de service sont produits dans `work_dir` ;
+  # * `production` : serveur d'hébergement FreeBSD (sudo, service(8),
+  #   certbot), par les enveloppes de `helpers_dir`.
   enum Mode
     DryRun
     Local
@@ -41,16 +42,18 @@ module PartiduoAgent
     property admin_url : String = ENV["PARTIDUO_ADMIN_URL"]? || "https://admin.partiduo.app"
     property token : String = ENV["PARTIDUO_AGENT_TOKEN"]? || ""
     property mode : Mode = Mode::DryRun
-    property state_dir : String = ENV["PARTIDUO_AGENT_STATE"]? || "/var/lib/partiduo-agent"
+    property state_dir : String = ENV["PARTIDUO_AGENT_STATE"]? || "/var/db/partiduo-agent"
     property work_dir : String = File.join(Dir.tempdir, "partiduo-agent")
     property backup_dir : String = "/var/backups/partiduo"
-    property manage : String = ENV["PARTIDUO_MANAGE"]? || "/opt/partiduo/current/bin/partiduo-manage"
-    property provision : String = ENV["PARTIDUO_PROVISION"]? || "/opt/partiduo/current/bin/partiduo-provision"
-    # Mode local : outils du paquet `devel` (`partiduo-app-devel`) ; vides,
-    # ceux de `app`.
-    property manage_devel : String = ENV["PARTIDUO_MANAGE_DEVEL"]? || ""
-    property provision_devel : String = ENV["PARTIDUO_PROVISION_DEVEL"]? || ""
-    property etc_dir : String = "/etc/partiduo"
+    # Mode local : outils des paquets `app` (`partiduo-app`) et `devel`
+    # (`partiduo-app-devel`), liens installés par les paquets dans
+    # /usr/local/bin ; ceux de `devel` vides : ceux de `app`. En production,
+    # les enveloppes prennent ceux du paquet de l'instance
+    # (/usr/local/lib/partiduo[-devel]/bin).
+    property manage : String = ENV["PARTIDUO_MANAGE"]? || "/usr/local/bin/partiduo-manage"
+    property provision : String = ENV["PARTIDUO_PROVISION"]? || "/usr/local/bin/partiduo-provision"
+    property manage_devel : String = ENV["PARTIDUO_MANAGE_DEVEL"]? || "/usr/local/bin/partiduo-devel-manage"
+    property provision_devel : String = ENV["PARTIDUO_PROVISION_DEVEL"]? || "/usr/local/bin/partiduo-devel-provision"
     property system_user : String = "partiduo"
     # Domaine des dossiers de ce serveur (`<sous-domaine>.<domaine>`) : les
     # hôtes reçus de l'administration doivent lui correspondre (D-AFN-004).
@@ -58,7 +61,7 @@ module PartiduoAgent
     property domain : String = ""
     # Production : scripts enveloppes possédés par root (D-AFN-002).
     property helpers_dir : String = "/usr/local/libexec/partiduo-agent"
-    property pg_socket : String = "/var/run/postgresql"
+    property pg_socket : String = "/tmp"
     property acme_email : String = ""
     property acme_staging : Bool = false
     # Remise des invitations par le serveur (D-CRA-003) : commande de
@@ -93,7 +96,6 @@ module PartiduoAgent
         parser.on("--provision-devel CHEMIN", "mode local : partiduo-provision du paquet devel") do |value|
           config.provision_devel = value
         end
-        parser.on("--etc-dir RÉP", "fichiers d'environnement des instances") { |value| config.etc_dir = value }
         parser.on("--system-user NOM", "compte système des instances") { |value| config.system_user = value }
         parser.on("--domain DOMAINE", "domaine des dossiers de ce serveur (obligatoire en production)") { |value| config.domain = value }
         parser.on("--helpers-dir RÉP", "production : scripts enveloppes de sudo") { |value| config.helpers_dir = value }

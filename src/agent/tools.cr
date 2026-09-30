@@ -85,7 +85,7 @@ module PartiduoAgent
 
     def self.server_key(args : Array(String), output : IO) : Int32
       path = ""
-      state_dir = ENV["PARTIDUO_AGENT_STATE"]? || "/var/lib/partiduo-agent"
+      state_dir = ENV["PARTIDUO_AGENT_STATE"]? || "/var/db/partiduo-agent"
       OptionParser.parse(args) do |parser|
         parser.banner = "Usage : partiduo-agent server-key [--state-dir RÉP | --server-key FICHIER]"
         parser.on("--state-dir RÉP", "état de l'exécutant") { |value| state_dir = value }

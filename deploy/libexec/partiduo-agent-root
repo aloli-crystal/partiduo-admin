@@ -3,20 +3,29 @@
 #
 # partiduo-agent-root — enveloppe des gestes que l'exécutant fait en root,
 # seule commande root que sudoers lui permet (deploy/partiduo-agent.sudoers,
-# D-AFN-002).
+# D-AFN-002). Serveur FreeBSD : instances servies par les paquets
+# partiduo-app (/usr/local/lib/partiduo, script rc.d `partiduo`) et
+# partiduo-app-devel (/usr/local/lib/partiduo-devel, `partiduo_devel`).
 #
 # Installée par root en 0755, possédée par root, dans
 # /usr/local/libexec/partiduo-agent/. Elle ne prend que des sous-domaines
-# (ou l'hôte `<sous-domaine>.<DOMAIN>`), validés ici. Elle n'exécute aucun
-# fichier écrit par un autre compte : l'unité systemd et les vhosts sont
-# produits ici depuis les gabarits possédés par root (TEMPLATES_DIR) ; le
-# fichier d'environnement produit par partiduo-provision est relu ligne à
-# ligne, clé par clé, jamais évalué, avant d'être installé.
+# (ou l'hôte `<sous-domaine>.<DOMAIN>`) et un paquet (app ou devel), validés
+# ici. Elle n'exécute aucun fichier écrit par un autre compte : la tâche cron
+# et les vhosts sont produits ici depuis les gabarits du paquet de l'instance
+# (installés par pkg, possédés par root) ; le fichier d'environnement
+# produit par partiduo-provision est relu ligne à ligne, clé par clé, jamais
+# évalué, avant d'être installé. Mêmes gestes que l'INSTALL.txt de
+# partiduo-provision (D-CLI-007).
 #
-#   install SLUG              fichier d'environnement, service, vhost, certificat
-#   remove SLUG               service, vhost, environnement, certificat, fichiers
-#   service SLUG start|stop   service de l'instance
-#   cert HÔTE exists|enddate  certificat Let's Encrypt de l'instance
+#   install SLUG app|devel|-      environnement, rc.conf, service, cron, vhost, certificat
+#   remove SLUG                   service, rc.conf, cron, vhost, environnement, certificat, fichiers
+#   service SLUG start|stop|status  service de l'instance (status : code 0 si elle tourne)
+#   cert HÔTE exists|enddate      certificat Let's Encrypt de l'instance
+#
+# Paquet d'une instance : celui dont la liste de rc.conf la déclare
+# (partiduo_instances ou partiduo_devel_instances). Déclarée dans les deux :
+# refus. Déclarée dans aucune : refus, sauf paquet explicite (install d'une
+# instance neuve). Paquet explicite contraire à la déclaration : refus.
 set -eu
 PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 export PATH
@@ -29,27 +38,44 @@ die() {
 
 # --- Configuration (possédée par root) -----------------------------------------
 
-CONF=/etc/partiduo-agent/helpers.conf
+CONF=/usr/local/etc/partiduo-agent/helpers.conf
+# Essais (specs) : autre configuration, jamais sous sudo (sudo efface
+# l'environnement et pose SUDO_USER).
 if [ -n "${PARTIDUO_AGENT_HELPERS_CONF:-}" ] && [ -z "${SUDO_USER:-}" ]; then
   CONF="$PARTIDUO_AGENT_HELPERS_CONF"
 else
-  [ "$(stat -c %u "$CONF" 2>/dev/null || echo x)" = 0 ] || die "configuration absente ou non possédée par root : $CONF"
+  # stat -f : FreeBSD (et macOS).
+  [ "$(stat -f %u "$CONF" 2>/dev/null || echo x)" = 0 ] || die "configuration absente ou non possédée par root : $CONF"
 fi
 DOMAIN=""
-INSTALL_ROOT=/opt/partiduo
-ETC_DIR=/etc/partiduo
+ETC_DIR=/usr/local/etc/partiduo
+DATA_DIR=/var/db/partiduo
 SYSTEM_USER=partiduo
-PG_SOCKET=/var/run/postgresql
-STAGE_DIR=/var/lib/partiduo/stage
-TEMPLATES_DIR=/usr/local/libexec/partiduo-agent/templates
+PG_SOCKET=/tmp
+STAGE_DIR=/var/db/partiduo-stage
 ACME_EMAIL=""
-ACME_WEBROOT=/var/www/letsencrypt
+ACME_WEBROOT=/usr/local/www/letsencrypt
 ACME_STAGING=0
-# Essais : préfixe des chemins système (/etc/systemd, /etc/nginx, /etc/letsencrypt).
+# Outils, par chemin absolu (surchargeables pour les essais seulement).
+SYSRC=/usr/sbin/sysrc
+SERVICE=/usr/sbin/service
+CERTBOT=/usr/local/bin/certbot
+NGINX=/usr/local/sbin/nginx
+OPENSSL=/usr/bin/openssl
+INSTALL=/usr/bin/install
+# Essais : préfixe des chemins système (/usr/local/etc, /usr/local/lib,
+# /var/log). Vide en production.
 SYSTEM_ROOT=""
 # shellcheck disable=SC1090
 . "$CONF"
 [ -n "$DOMAIN" ] || die "DOMAIN manquant dans $CONF"
+
+LIB_DIR="$SYSTEM_ROOT/usr/local/lib"
+NGINX_DIR="$SYSTEM_ROOT/usr/local/etc/nginx"
+LIVE_DIR="$SYSTEM_ROOT/usr/local/etc/letsencrypt/live"
+CRON_DIR="$SYSTEM_ROOT/usr/local/etc/cron.d"
+# Journal des instances : fixé par le script rc.d des paquets.
+LOG_DIR="$SYSTEM_ROOT/var/log/partiduo"
 
 check_slug() {
   printf '%s' "$1" | grep -Eq '^[a-z][a-z0-9-]{0,39}$' || die "sous-domaine invalide"
@@ -62,9 +88,36 @@ check_host() {
   check_slug "${1%."$DOMAIN"}"
 }
 
-UNIT_DIR="$SYSTEM_ROOT/etc/systemd/system"
-NGINX_DIR="$SYSTEM_ROOT/etc/nginx"
-LIVE_DIR="$SYSTEM_ROOT/etc/letsencrypt/live"
+# --- Paquet d'une instance (rc.conf) ---------------------------------------------
+
+# Valeur d'une variable de rc.conf ; vide si elle n'est pas définie.
+rc_value() {
+  "$SYSRC" -n "$1" 2>/dev/null | tr '\t\n' '  ' || true
+}
+
+# Paquet qui sert l'instance $1 : app ou devel, d'après rc.conf ; $2 : paquet
+# explicite (app, devel) ou « - » (le paquet déclaré).
+resolve_package() {
+  explicit="$2"
+  case "$explicit" in app | devel | -) ;; *) die "paquet refusé" ;; esac
+  declared=""
+  case " $(rc_value partiduo_instances) " in *" $1 "*) declared=app ;; esac
+  case " $(rc_value partiduo_devel_instances) " in
+    *" $1 "*) [ -z "$declared" ] || die "instance déclarée dans les deux paquets (partiduo_instances et partiduo_devel_instances) : $1"
+      declared=devel ;;
+  esac
+  if [ -z "$declared" ]; then
+    [ "$explicit" != - ] || die "instance non déclarée dans rc.conf : $1"
+    echo "$explicit"
+  else
+    [ "$explicit" = - ] || [ "$explicit" = "$declared" ] || die "paquet $explicit contraire à la déclaration de $1 ($declared)"
+    echo "$declared"
+  fi
+}
+
+# Répertoire (sous /usr/local/lib) et script rc.d d'un paquet.
+package_name() { if [ "$1" = devel ]; then echo partiduo-devel; else echo partiduo; fi; }
+rc_name() { if [ "$1" = devel ]; then echo partiduo_devel; else echo partiduo; fi; }
 
 # Rend un gabarit {{CLÉ}} avec les variables TPL_CLÉ ; échoue si une clé
 # reste sans valeur.
@@ -89,6 +142,11 @@ render() {
 # ce qui désigne l'instance (hôte, base, stockage). Rend les lignes validées
 # sur la sortie standard. Aucune valeur n'est répétée dans les messages
 # d'erreur.
+#
+# PARTIDUO_ASSETS_ROOT est refusée : le paquet range les fichiers statiques
+# à côté de ses programmes (share/partiduo/assets), que l'application trouve
+# seule ; la variable, prioritaire, ne pourrait que les détourner (un
+# fichier d'environnement qui la porte vient d'un ancien partiduo-provision).
 validate_env() {
   source_file="$1"
   slug="$2"
@@ -96,6 +154,7 @@ validate_env() {
   database="partiduo_$(printf '%s' "$slug" | tr '-' '_')"
   [ -f "$source_file" ] && [ ! -L "$source_file" ] || die "fichier d'environnement absent : $source_file"
   port=""
+  media=""
   while IFS= read -r line || [ -n "$line" ]; do
     case "$line" in '' | '#'*) continue ;; esac
     key="${line%%=*}"
@@ -107,8 +166,17 @@ validate_env() {
       MARTEN_ALLOWED_HOSTS | PARTIDUO_HOST) [ "$value" = "$host" ] || die "$key refusé" ;;
       DATABASE_URL) [ "$value" = "postgres:///$database?host=$PG_SOCKET" ] || die "DATABASE_URL refusée" ;;
       PARTIDUO_DOMAIN) [ "$value" = "$DOMAIN" ] || die "PARTIDUO_DOMAIN refusé" ;;
-      PARTIDUO_ASSETS_ROOT) [ "$value" = "$INSTALL_ROOT/instances/$slug/release/assets" ] || die "PARTIDUO_ASSETS_ROOT refusé" ;;
-      PARTIDUO_MEDIA_ROOT) [ "$value" = "$INSTALL_ROOT/instances/$slug/media" ] || die "PARTIDUO_MEDIA_ROOT refusé" ;;
+      PARTIDUO_MEDIA_ROOT)
+        [ "$value" = "$DATA_DIR/$slug/media" ] || die "PARTIDUO_MEDIA_ROOT refusé"
+        media="$value"
+        ;;
+      PARTIDUO_MODELES_PDF)
+        # `auto` (convertisseur du paquet) ou chemin absolu sans « .. ».
+        if [ "$value" != auto ]; then
+          printf '%s' "$value" | grep -Eq '^/[A-Za-z0-9_./-]+$' || die "PARTIDUO_MODELES_PDF refusé"
+          case "/$value/" in */../* | */./*) die "PARTIDUO_MODELES_PDF refusé" ;; esac
+        fi
+        ;;
       PARTIDUO_MODULES) printf '%s' "$value" | grep -Eq '^[a-z][a-z0-9_]*(,[a-z][a-z0-9_]*)*$' || die "PARTIDUO_MODULES refusé" ;;
       PARTIDUO_TIME_ZONE) printf '%s' "$value" | grep -Eq '^[A-Za-z_]+(/[A-Za-z_+-]+)*$' || die "PARTIDUO_TIME_ZONE refusé" ;;
       PORT)
@@ -121,6 +189,7 @@ validate_env() {
     printf '%s=%s\n' "$key" "$value"
   done <"$source_file"
   [ -n "$port" ] || die "PORT manquant"
+  [ -n "$media" ] || die "PARTIDUO_MEDIA_ROOT manquant"
 }
 
 [ $# -ge 1 ] || die "usage : install | remove | service | cert"
@@ -129,71 +198,101 @@ shift
 
 case "$command" in
   install)
-    [ $# -eq 1 ] || die "usage : install SLUG"
+    [ $# -eq 2 ] || die "usage : install SLUG app|devel|-"
     slug="$1"
     check_slug "$slug"
     host="$slug.$DOMAIN"
-    # Validation d'abord : rien n'est écrit si le fichier est refusé.
-    environment=$(validate_env "$STAGE_DIR/$slug/$slug.env" "$slug")
+    package=$(resolve_package "$slug" "$2") || exit 2
+    rc=$(rc_name "$package")
+    package_dir="$LIB_DIR/$(package_name "$package")"
+    # Prérequis, vérifié avant toute modification : nginx lit les vhosts des instances.
+    grep -Eq '^[[:space:]]*include[[:space:]]+partiduo/\*\.conf;' "$NGINX_DIR/nginx.conf" 2>/dev/null ||
+      die "nginx.conf : « include partiduo/*.conf; » manque dans le bloc http ($NGINX_DIR/nginx.conf)"
+    # Validation ensuite : rien n'est écrit si le fichier est refusé.
+    environment=$(validate_env "$STAGE_DIR/$slug/$slug.env" "$slug") || exit 2
     port=$(printf '%s\n' "$environment" | sed -n 's/^PORT=//p')
-    work=$(mktemp -d)
+    work=$(mktemp -d "${TMPDIR:-/tmp}/partiduo-agent.XXXXXX")
     trap 'rm -rf "$work"' EXIT
     chmod 700 "$work"
     printf '%s\n' "$environment" >"$work/$slug.env"
 
-    TPL_DOSSIER="$slug" TPL_HOST="$host" TPL_DOMAIN="$DOMAIN" TPL_PORT="$port" TPL_INSTALL_ROOT="$INSTALL_ROOT"
+    # Gabarits du paquet qui sert l'instance (installés par pkg, possédés
+    # par root) : ceux de la version de partiduo-provision qui a produit
+    # l'environnement.
+    templates="$package_dir/deploy/templates"
+    TPL_DOSSIER="$slug" TPL_HOST="$host" TPL_DOMAIN="$DOMAIN" TPL_PORT="$port" TPL_DATA_DIR="$DATA_DIR"
     TPL_ETC_DIR="$ETC_DIR" TPL_ENV_FILE="$ETC_DIR/$slug.env" TPL_SYSTEM_USER="$SYSTEM_USER" TPL_ACME_WEBROOT="$ACME_WEBROOT"
-    export TPL_DOSSIER TPL_HOST TPL_DOMAIN TPL_PORT TPL_INSTALL_ROOT TPL_ETC_DIR TPL_ENV_FILE TPL_SYSTEM_USER TPL_ACME_WEBROOT
-    render "$TEMPLATES_DIR/partiduo-instance.service.tmpl" "$work/partiduo-$slug.service"
-    render "$TEMPLATES_DIR/nginx-acme.conf.tmpl" "$work/acme.conf"
-    render "$TEMPLATES_DIR/nginx-vhost.conf.tmpl" "$work/vhost.conf"
+    TPL_MANAGE_PATH="$package_dir/bin/partiduo-manage" TPL_DAILY_COMMAND=invoicing_month_end TPL_DAILY_MINUTE=$((port % 60))
+    export TPL_DOSSIER TPL_HOST TPL_DOMAIN TPL_PORT TPL_DATA_DIR TPL_ETC_DIR TPL_ENV_FILE TPL_SYSTEM_USER TPL_ACME_WEBROOT \
+      TPL_MANAGE_PATH TPL_DAILY_COMMAND TPL_DAILY_MINUTE
+    render "$templates/nginx-acme.conf.tmpl" "$work/acme.conf"
+    render "$templates/nginx-vhost.conf.tmpl" "$work/vhost.conf"
+    render "$templates/partiduo-instance.cron.tmpl" "$work/cron"
 
-    # Mêmes gestes que l'INSTALL.txt de partiduo-provision (D-CLI-007).
-    install -d -o root -g "$SYSTEM_USER" -m 750 "$ETC_DIR"
-    install -o root -g "$SYSTEM_USER" -m 640 "$work/$slug.env" "$ETC_DIR/$slug.env"
-    install -d -o "$SYSTEM_USER" -g "$SYSTEM_USER" "$INSTALL_ROOT/instances/$slug" "$INSTALL_ROOT/instances/$slug/media"
-    [ -e "$INSTALL_ROOT/instances/$slug/release" ] ||
-      ln -sfn "$INSTALL_ROOT/current" "$INSTALL_ROOT/instances/$slug/release"
-    install -m 644 "$work/partiduo-$slug.service" "$UNIT_DIR/partiduo-$slug.service"
-    systemctl daemon-reload
-    systemctl enable --now "partiduo-$slug.service"
-    install -d -m 755 "$ACME_WEBROOT"
-    install -m 644 "$work/acme.conf" "$NGINX_DIR/sites-available/partiduo-$slug.conf"
-    ln -sfn "$NGINX_DIR/sites-available/partiduo-$slug.conf" "$NGINX_DIR/sites-enabled/partiduo-$slug.conf"
-    test -f "$LIVE_DIR/$host/fullchain.pem" || { nginx -t && systemctl reload nginx; }
+    "$INSTALL" -d -o root -g "$SYSTEM_USER" -m 750 "$ETC_DIR"
+    "$INSTALL" -o root -g "$SYSTEM_USER" -m 640 "$work/$slug.env" "$ETC_DIR/$slug.env"
+    "$INSTALL" -d -o "$SYSTEM_USER" -g "$SYSTEM_USER" -m 750 "$DATA_DIR/$slug" "$DATA_DIR/$slug/media" "$LOG_DIR"
+    # Service : script rc.d du paquet, une instance de plus (sans doublon).
+    case " $(rc_value "${rc}_instances") " in
+      *" $slug "*) ;;
+      *) "$SYSRC" "${rc}_instances+= $slug" ;;
+    esac
+    "$SYSRC" "${rc}_enable=YES"
+    # Rejouable : une instance qui tourne déjà n'est pas redémarrée.
+    "$SERVICE" "$rc" status "$slug" >/dev/null 2>&1 || "$SERVICE" "$rc" start "$slug"
+    # Tâches quotidiennes (cron(8), champ utilisateur).
+    "$INSTALL" -d -m 755 "$CRON_DIR"
+    "$INSTALL" -m 644 "$work/cron" "$CRON_DIR/partiduo-$slug"
+    # Certificat : vhost d'amorçage (défi HTTP-01), certbot, vhost définitif.
+    "$INSTALL" -d -m 755 "$ACME_WEBROOT" "$NGINX_DIR/partiduo"
+    "$INSTALL" -m 644 "$work/acme.conf" "$NGINX_DIR/partiduo/$slug.conf"
+    if [ ! -f "$LIVE_DIR/$host/fullchain.pem" ]; then
+      "$NGINX" -t
+      "$SERVICE" nginx reload
+    fi
     if [ -n "$ACME_EMAIL" ]; then
       set -- --email "$ACME_EMAIL"
     else
       set -- --register-unsafely-without-email
     fi
     [ "$ACME_STAGING" = 0 ] || set -- "$@" --test-cert
-    certbot certonly --webroot -w "$ACME_WEBROOT" -d "$host" --cert-name "$host" --keep-until-expiring \
-      --non-interactive --agree-tos "$@" --deploy-hook 'systemctl reload nginx'
-    install -m 644 "$work/vhost.conf" "$NGINX_DIR/sites-available/partiduo-$slug.conf"
-    nginx -t
-    systemctl reload nginx
+    "$CERTBOT" certonly --webroot -w "$ACME_WEBROOT" -d "$host" --cert-name "$host" --keep-until-expiring \
+      --non-interactive --agree-tos "$@" --deploy-hook 'service nginx reload'
+    "$INSTALL" -m 644 "$work/vhost.conf" "$NGINX_DIR/partiduo/$slug.conf"
+    "$NGINX" -t
+    "$SERVICE" nginx reload
     ;;
 
   remove)
     [ $# -eq 1 ] || die "usage : remove SLUG"
     slug="$1"
     check_slug "$slug"
-    systemctl disable --now "partiduo-$slug.service" || true
-    rm -f "$UNIT_DIR/partiduo-$slug.service" "$NGINX_DIR/sites-enabled/partiduo-$slug.conf" \
-      "$NGINX_DIR/sites-available/partiduo-$slug.conf" "$ETC_DIR/$slug.env"
-    certbot delete --cert-name "$slug.$DOMAIN" --non-interactive || true
-    systemctl daemon-reload
-    systemctl reload nginx || true
+    # Service arrêté puis retiré de chaque liste qui le déclare (le script
+    # rc.d refuse une instance absente de sa liste : l'arrêt d'abord).
+    for rc in partiduo partiduo_devel; do
+      case " $(rc_value "${rc}_instances") " in
+        *" $slug "*)
+          "$SERVICE" "$rc" stop "$slug" || true
+          "$SYSRC" "${rc}_instances-=$slug"
+          ;;
+      esac
+    done
+    rm -f "$CRON_DIR/partiduo-$slug" "$NGINX_DIR/partiduo/$slug.conf" "$ETC_DIR/$slug.env"
+    "$CERTBOT" delete --cert-name "$slug.$DOMAIN" --non-interactive || true
+    "$SERVICE" nginx reload || true
     # Suppression définitive : fichiers de l'instance (pièces jointes
-    # comprises) et fichiers produits par partiduo-provision.
-    rm -rf "${INSTALL_ROOT:?}/instances/$slug" "${STAGE_DIR:?}/$slug"
+    # comprises) et fichiers produits par partiduo-provision. Les journaux
+    # ($LOG_DIR/$slug*.log) restent.
+    rm -rf "${DATA_DIR:?}/$slug" "${STAGE_DIR:?}/$slug"
     ;;
 
   service)
-    [ $# -eq 2 ] || die "usage : service SLUG start|stop"
+    [ $# -eq 2 ] || die "usage : service SLUG start|stop|status"
     check_slug "$1"
-    case "$2" in start | stop) ;; *) die "commande refusée" ;; esac
-    exec systemctl "$2" "partiduo-$1.service"
+    case "$2" in start | stop | status) ;; *) die "commande refusée" ;; esac
+    package=$(resolve_package "$1" -) || exit 2
+    # status : code de sortie de rc.subr (0 si l'instance tourne).
+    exec "$SERVICE" "$(rc_name "$package")" "$2" "$1"
     ;;
 
   cert)
@@ -201,7 +300,7 @@ case "$command" in
     check_host "$1"
     case "$2" in
       exists) exec test -f "$LIVE_DIR/$1/fullchain.pem" ;;
-      enddate) exec openssl x509 -enddate -noout -in "$LIVE_DIR/$1/cert.pem" ;;
+      enddate) exec "$OPENSSL" x509 -enddate -noout -in "$LIVE_DIR/$1/cert.pem" ;;
       *) die "commande refusée" ;;
     esac
     ;;

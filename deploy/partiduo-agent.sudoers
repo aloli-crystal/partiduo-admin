@@ -1,11 +1,13 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
-# /etc/sudoers.d/partiduo-agent — commandes permises à l'exécutant (ADR-008 D4,
-# D-AFN-002). Deux scripts enveloppes seulement, possédés par root (0755,
+# /usr/local/etc/sudoers.d/partiduo-agent — commandes permises à l'exécutant
+# (ADR-008 D4, D-AFN-002), installé par le paquet partiduo-agent (root 0440).
+# Deux scripts enveloppes seulement, possédés par root (0755,
 # /usr/local/libexec/partiduo-agent/, répertoire root 0755) : ils valident
-# chacun de leurs arguments (sous-domaine, base partiduo_*, version publiée,
-# chemins sous le répertoire des sauvegardes) et tirent tout le reste de
-# /etc/partiduo-agent/helpers.conf (root 0644). Aucun joker, aucun shell,
-# aucun fichier écrit par un autre compte n'est exécuté en root.
+# chacun de leurs arguments (sous-domaine, base partiduo_*, paquet app ou
+# devel, chemins sous le répertoire des sauvegardes) et tirent tout le reste
+# de /usr/local/etc/partiduo-agent/helpers.conf (root 0644) et de rc.conf.
+# Aucun joker, aucun shell, aucun fichier écrit par un autre compte n'est
+# exécuté en root.
 Defaults:partiduo-agent env_reset, !setenv
 partiduo-agent ALL=(root) NOPASSWD: /usr/local/libexec/partiduo-agent/partiduo-agent-root
 partiduo-agent ALL=(partiduo) NOPASSWD: /usr/local/libexec/partiduo-agent/partiduo-agent-instance

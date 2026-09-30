@@ -145,8 +145,9 @@ module PartiduoAdmin
     end
   end
 
-  # Planification (commande `manage schedule`, lancée par un minuteur
-  # systemd) : sauvegardes planifiées, élagage selon la rétention,
+  # Planification (commande `manage schedule`, lancée toutes les quinze
+  # minutes par cron, /usr/local/etc/cron.d/partiduo-admin) : sauvegardes
+  # planifiées, élagage selon la rétention,
   # restaurations test périodiques, supervision, alertes.
   module Scheduler
     record Summary, backups : Int32, prunes : Int32, test_restores : Int32, checks : Int32

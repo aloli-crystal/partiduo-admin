@@ -163,7 +163,7 @@ dans l'administration (DECISIONS D-CHF-001 à D-CHF-012 de partiduo-app) :
 |Fichiers en clair (`.dump`, `.media.tar.gz`), comme avant.
 
 |Clé du serveur (défaut)
-|Chiffrés par une clé propre au serveur (`/var/lib/partiduo-agent/backup-server.key`,
+|Chiffrés par une clé propre au serveur (`/var/db/partiduo-agent/backup-server.key`,
 0600, créée au premier usage) : les copies hors site sont protégées, le
 serveur restaure seul.
 
@@ -206,7 +206,7 @@ sauvegardes qu'elle a chiffrées.
   l'enveloppe (en-tête, clé attendue, engagement, découpage) et la liste
   l'indique « enveloppe seule » : le contenu n'est vérifiable qu'avec la clé
   du cabinet (« Tester avec la clé »).
-* *Clé du serveur* : `partiduo-agent server-key --state-dir /var/lib/partiduo-agent`
+* *Clé du serveur* : `partiduo-agent server-key --state-dir /var/db/partiduo-agent`
   la crée au besoin et affiche son empreinte. Copiez le fichier dans un
   coffre hors du serveur : sans lui, les sauvegardes « clé du serveur » sont
   perdues avec le serveur.
@@ -304,23 +304,30 @@ exemple `--fail-on "tar"` pour une sauvegarde.
 `local`::
 Machine de développement : vraies bases `partiduo_adm_*` (toute autre base
 est refusée), vrais `partiduo-provision`, `pg_dump`, `pg_restore`, `tar` ;
-ni vhost, ni systemd, ni Let's Encrypt — les fichiers de service sont
+ni vhost, ni service rc.d, ni Let's Encrypt — les fichiers de service sont
 produits dans `--work-dir`, l'arrêt d'un service est un fichier témoin.
-`--manage` et `--provision` désignent les outils du paquet `app`,
-`--manage-devel` et `--provision-devel` ceux du paquet `devel` (à défaut,
-ceux de `app`) ; le paquet d'une instance est retenu dans le fichier
-`PACKAGE` de son répertoire.
+`--manage` et `--provision` désignent les outils du paquet `app` (défaut :
+`/usr/local/bin/partiduo-manage` et `partiduo-provision`, liens du paquet
+`partiduo-app`), `--manage-devel` et `--provision-devel` ceux du paquet
+`devel` (défaut : `/usr/local/bin/partiduo-devel-manage` et
+`partiduo-devel-provision` ; vides, ceux de `app`) ; le paquet d'une
+instance est retenu dans le fichier `PACKAGE` de son répertoire.
 
 `production`::
-Serveur d'hébergement : `sudo -n` limité par `deploy/partiduo-agent.sudoers` à
-deux scripts enveloppes possédés par root (`deploy/libexec/`), qui valident
-leurs arguments et lisent `/etc/partiduo-agent/helpers.conf`
-(`deploy/helpers.conf.example`) : `partiduo-agent-root` (installation et
-retrait d'une instance, service, certificat) et `partiduo-agent-instance`
-(interface d'instance, `partiduo-provision`, bases, sauvegardes,
-sous le compte des instances, propriétaire des bases). `--domain` est
-obligatoire : l'hôte et la base de chaque tâche sont recalculés depuis le
-sous-domaine (D-AFN-002, D-AFN-004, D-AFN-005).
+Serveur d'hébergement FreeBSD : `/usr/local/bin/sudo -n` limité par
+`deploy/partiduo-agent.sudoers` à deux scripts enveloppes possédés par root
+(`deploy/libexec/`), qui valident leurs arguments et lisent
+`/usr/local/etc/partiduo-agent/helpers.conf` (`deploy/helpers.conf.example`)
+: `partiduo-agent-root` (installation et retrait d'une instance, service
+par `service(8)`, certificat) et `partiduo-agent-instance` (interface
+d'instance, `partiduo-provision`, bases, sauvegardes, sous le compte des
+instances, propriétaire des bases). Le paquet qui sert une instance
+(`partiduo-app` ou `partiduo-app-devel`) est celui dont la liste de
+`rc.conf` la déclare (`partiduo_instances` ou `partiduo_devel_instances`) ;
+les enveloppes refusent une instance déclarée dans les deux listes, ou un
+paquet contraire à sa déclaration. `--domain` est obligatoire : l'hôte et la
+base de chaque tâche sont recalculés depuis le sous-domaine (D-AFN-002,
+D-AFN-004, D-AFN-005).
 
 *Invitations remises par le serveur* (tous modes, recommandé en production) :
 `--mail-command "/usr/sbin/sendmail -oi" --mail-from noreply@partiduo.app`.
@@ -366,32 +373,103 @@ crystal tool format --check src spec config scripts manage.cr
 crystal build lib/ameba/bin/ameba.cr -o bin/ameba && bin/ameba
 ----
 
-== Exploitation
+== Exploitation (FreeBSD)
 
-`deploy/` : unités systemd de l'application, de la planification (minuteur
-de 15 minutes) et de l'exécutant, règles sudoers de l'exécutant et ses
-scripts enveloppes.
+Les serveurs tournent sous FreeBSD 15. Tout s'installe par paquets, depuis
+l'arbre de ports aloli-ports :
 
-Installation de l'exécutant sur un serveur (en root) :
+* `finance/partiduo-admin` : l'application (`partiduo-admin`,
+  `partiduo-admin-manage`, fichiers statiques, gabarits et traductions
+  rangés dans `share/partiduo-admin/` à côté des programmes, voir
+  `config/settings/production.cr`), son script rc.d `partiduo_admin` et la
+  planification `/usr/local/etc/cron.d/partiduo-admin`
+  (`partiduo-admin-manage schedule` toutes les quinze minutes) ;
+* `sysutils/partiduo-agent` : l'exécutant (`partiduo-agent`), les deux
+  scripts enveloppes (`deploy/libexec/`) dans
+  `/usr/local/libexec/partiduo-agent/`, les règles sudoers
+  (`deploy/partiduo-agent.sudoers`) dans
+  `/usr/local/etc/sudoers.d/partiduo-agent` et son script rc.d
+  `partiduo_agent` ;
+* `finance/partiduo-app` et `finance/partiduo-app-devel` : les instances
+  (`/usr/local/lib/partiduo`, `/usr/local/lib/partiduo-devel`, scripts rc.d
+  `partiduo` et `partiduo_devel`), que l'exécutant installe avec leur
+  `partiduo-provision`, leurs gabarits (`deploy/templates/`) et leur
+  `partiduo-manage`. Les paquets sont mis à jour par beryl, pas par
+  l'exécutant : le script rc.d d'une instance passe ses migrations avant
+  chaque démarrage.
+
+`deploy/` ne contient plus que ce que les ports reprennent : les règles
+sudoers, les scripts enveloppes et l'exemple de leur configuration. Les
+paquets créent les comptes système (`partiduo` par `partiduo-app`,
+`partiduo-agent` et `partiduo-admin` par les leurs) ; sans eux :
+`pw useradd partiduo-agent -c "Partiduo agent" -d /nonexistent -s /usr/sbin/nologin`
+(de même pour `partiduo-admin`).
+
+Serveur d'hébergement, après `pkg install partiduo-agent partiduo-app`
+(et `partiduo-app-devel` au besoin), en root :
 
 [source,sh]
 ----
-useradd --system partiduo-agent
-install -d -o root -g root -m 755 /usr/local/libexec/partiduo-agent /etc/partiduo-agent
-install -o root -g root -m 755 deploy/libexec/partiduo-agent-* /usr/local/libexec/partiduo-agent/
-cp -R ../partiduo-app/deploy/templates /usr/local/libexec/partiduo-agent/templates   # root, 0644
-install -o root -g root -m 644 deploy/helpers.conf.example /etc/partiduo-agent/helpers.conf   # à adapter
-install -o root -g root -m 440 deploy/partiduo-agent.sudoers /etc/sudoers.d/partiduo-agent && visudo -c
-install -d -o partiduo -g partiduo-agent -m 2770 /var/backups/partiduo
-install -d -o partiduo -g partiduo -m 750 /var/lib/partiduo /var/lib/partiduo/stage
-install -d -o partiduo-agent -g partiduo-agent -m 700 /var/lib/partiduo-agent
-sudo -u partiduo-agent partiduo-agent server-key --state-dir /var/lib/partiduo-agent   # clé du serveur : à copier hors du serveur
-sudo -u postgres createuser --createdb --no-superuser partiduo
+# Configuration des enveloppes (root 0644 : elles refusent de démarrer sinon)
+install -d -o root -g wheel -m 755 /usr/local/etc/partiduo-agent
+install -o root -g wheel -m 644 deploy/helpers.conf.example /usr/local/etc/partiduo-agent/helpers.conf   # à adapter
+visudo -c   # règles de /usr/local/etc/sudoers.d/partiduo-agent (paquet)
+# Répertoires : sauvegardes (les deux comptes y écrivent ; les répertoires des
+# dossiers héritent du groupe, règle BSD), fichiers de partiduo-provision,
+# état de l'exécutant
+install -d -o partiduo -g partiduo-agent -m 770 /var/backups/partiduo
+install -d -o partiduo -g partiduo -m 750 /var/db/partiduo-stage
+install -d -o partiduo-agent -g partiduo-agent -m 700 /var/db/partiduo-agent
+su -m partiduo-agent -c 'partiduo-agent server-key --state-dir /var/db/partiduo-agent'   # à copier hors du serveur
+# Rôle PostgreSQL des instances (socket /tmp, authentification peer)
+su -m postgres -c 'createuser --createdb --no-superuser partiduo'
+# nginx lit les vhosts des instances : dans le bloc http de
+# /usr/local/etc/nginx/nginx.conf, « include partiduo/*.conf; »
+# Jeton du serveur (affiché à sa création dans l'administration)
+install -o partiduo-agent -g partiduo-agent -m 600 jeton.txt /usr/local/etc/partiduo-agent/agent.token
+sysrc partiduo_agent_enable=YES
+sysrc partiduo_agent_flags="--mode production --admin-url https://admin.partiduo.app \
+  --token-file /usr/local/etc/partiduo-agent/agent.token --domain partiduo.app \
+  --mail-command '/usr/sbin/sendmail -oi' --mail-from noreply@partiduo.app"
+service partiduo_agent start
 ----
-Variables : `DATABASE_URL`, `MARTEN_SECRET_KEY`, `PARTIDUO_DOMAIN`
+
+`--domain` : même valeur que `DOMAIN` de `helpers.conf`. Défauts de
+l'exécutant : `--state-dir /var/db/partiduo-agent`, `--backup-dir
+/var/backups/partiduo`, `--pg-socket /tmp`, `--helpers-dir
+/usr/local/libexec/partiduo-agent`. `--mail-command` exige un MTA local
+(D-CRA-003).
+
+Pour chaque instance, l'enveloppe racine fait les gestes de l'`INSTALL.txt`
+de `partiduo-provision` : environnement `/usr/local/etc/partiduo/<dossier>.env`
+(root:partiduo 0640, relu et validé clé par clé), données
+`/var/db/partiduo/<dossier>` (pièces jointes dans `media/`), journal
+`/var/log/partiduo/<dossier>.log`, déclaration dans `rc.conf`
+(`partiduo_instances` ou `partiduo_devel_instances`, `…_enable=YES`),
+`service partiduo[_devel] start <dossier>`, tâche quotidienne
+`/usr/local/etc/cron.d/partiduo-<dossier>`, vhost
+`/usr/local/etc/nginx/partiduo/<dossier>.conf` et certificat Let's Encrypt
+(`/usr/local/etc/letsencrypt/live/<hôte>/`, défi HTTP-01 sur
+`/usr/local/www/letsencrypt`, `--deploy-hook 'service nginx reload'`).
+
+Serveur de l'administration, après `pkg install partiduo-admin` :
+
+[source,sh]
+----
+su -m postgres -c 'createuser partiduo-admin && createdb --owner=partiduo-admin --encoding=UTF8 partiduo_admin'
+# Avec l'environnement de l'application (ci-dessous), sous partiduo-admin :
+#   partiduo-admin-manage migrate
+#   partiduo-admin-manage bootstrap --email=vous@exemple.fr   # lien d'invitation
+sysrc partiduo_admin_enable=YES
+service partiduo_admin start
+----
+
+Variables de l'application (fichier d'environnement lu par son script rc.d,
+voir le port) : `DATABASE_URL`, `MARTEN_SECRET_KEY`, `PARTIDUO_DOMAIN`
 (`partiduo.app`), `PARTIDUO_ADMIN_HOST`, `PARTIDUO_ADMIN_URL`,
-`PARTIDUO_ADMIN_MAIL_FROM`, `PARTIDUO_ADMIN_ALERTS_TO`,
-`PARTIDUO_ADMIN_ASSETS_ROOT`.
+`PARTIDUO_ADMIN_MAIL_FROM`, `PARTIDUO_ADMIN_ALERTS_TO` ; au besoin
+`PARTIDUO_ADMIN_ASSETS_ROOT` et `PARTIDUO_ADMIN_ARTIFACTS_ROOT`, prioritaires
+sur les fichiers du paquet.
 
 Décisions et blocages : `../partiduo-app/DECISIONS.adoc` (`D-ADM-…`) et
 `../partiduo-app/BLOCAGES.adoc` (`B-ADM-…`).
