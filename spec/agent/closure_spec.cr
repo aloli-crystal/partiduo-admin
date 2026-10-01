@@ -313,7 +313,7 @@ private HELPER_DOUBLES = {
       status) test -f "$FAKE_ROOT/running.$1.$3" ;;
     esac
     SH
-  "acme.sh" => <<-'SH',
+  "acme.sh" => <<-SH,
     #!/bin/sh
     echo "acme.sh $*" >> "$FAKE_ROOT/calls"
     action=$1; host=""; fullchain=""; key=""
