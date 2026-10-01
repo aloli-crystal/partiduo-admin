@@ -21,7 +21,10 @@ DOMAIN=partiduo.app
 # Fichiers produits par partiduo-provision (compte des instances,
 # partiduo:partiduo 0750), relus par root à l'installation.
 #STAGE_DIR=/var/db/partiduo-stage
-# Certificats Let's Encrypt (certbot, défi HTTP-01).
+# Certificats Let's Encrypt (acme.sh de la recette beryl `acme`, défi
+# HTTP-01 ; installés dans /usr/local/etc/ssl/acme/<hôte>/). ACME_EMAIL :
+# compte ACME avec adresse (vide : compte sans courriel) ; ACME_STAGING=1 :
+# autorité de test (n'entame pas le quota).
 ACME_EMAIL=
 #ACME_WEBROOT=/usr/local/www/letsencrypt
 #ACME_STAGING=0

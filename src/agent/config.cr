@@ -14,7 +14,7 @@ module PartiduoAgent
   #   `partiduo_adm_*` de la machine, sans vhost, service rc.d ni Let's
   #   Encrypt : les fichiers de service sont produits dans `work_dir` ;
   # * `production` : serveur d'hébergement FreeBSD (sudo, service(8),
-  #   certbot), par les enveloppes de `helpers_dir`.
+  #   acme.sh), par les enveloppes de `helpers_dir`.
   enum Mode
     DryRun
     Local

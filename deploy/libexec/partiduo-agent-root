@@ -15,12 +15,15 @@
 # (installés par pkg, possédés par root) ; le fichier d'environnement
 # produit par partiduo-provision est relu ligne à ligne, clé par clé, jamais
 # évalué, avant d'être installé. Mêmes gestes que l'INSTALL.txt de
-# partiduo-provision (D-CLI-007).
+# partiduo-provision (D-CLI-007), certificat par acme.sh comme sur le parc
+# beryl (D-PKG-007 de partiduo-app : recette beryl `acme`, home
+# /usr/local/etc/acme.sh dont le cron renouvelle les certificats).
 #
 #   install SLUG app|devel|-      environnement, rc.conf, service, cron, vhost, certificat
 #   remove SLUG                   service, rc.conf, cron, vhost, environnement, certificat, fichiers
 #   service SLUG start|stop|status  service de l'instance (status : code 0 si elle tourne)
 #   cert HÔTE exists|enddate      certificat Let's Encrypt de l'instance
+#                                 (/usr/local/etc/ssl/acme/HÔTE/fullchain.pem)
 #
 # Paquet d'une instance : celui dont la liste de rc.conf la déclare
 # (partiduo_instances ou partiduo_devel_instances). Déclarée dans les deux :
@@ -59,7 +62,7 @@ ACME_STAGING=0
 # Outils, par chemin absolu (surchargeables pour les essais seulement).
 SYSRC=/usr/sbin/sysrc
 SERVICE=/usr/sbin/service
-CERTBOT=/usr/local/bin/certbot
+ACME_SH=/usr/local/sbin/acme.sh
 NGINX=/usr/local/sbin/nginx
 OPENSSL=/usr/bin/openssl
 INSTALL=/usr/bin/install
@@ -72,7 +75,10 @@ SYSTEM_ROOT=""
 
 LIB_DIR="$SYSTEM_ROOT/usr/local/lib"
 NGINX_DIR="$SYSTEM_ROOT/usr/local/etc/nginx"
-LIVE_DIR="$SYSTEM_ROOT/usr/local/etc/letsencrypt/live"
+# acme.sh : home du cron de renouvellement (recette beryl `acme`) et
+# certificats installés, un répertoire par hôte.
+ACME_HOME="$SYSTEM_ROOT/usr/local/etc/acme.sh"
+CERT_DIR="$SYSTEM_ROOT/usr/local/etc/ssl/acme"
 CRON_DIR="$SYSTEM_ROOT/usr/local/etc/cron.d"
 # Journal des instances : fixé par le script rc.d des paquets.
 LOG_DIR="$SYSTEM_ROOT/var/log/partiduo"
@@ -205,7 +211,9 @@ case "$command" in
     package=$(resolve_package "$slug" "$2") || exit 2
     rc=$(rc_name "$package")
     package_dir="$LIB_DIR/$(package_name "$package")"
-    # Prérequis, vérifié avant toute modification : nginx lit les vhosts des instances.
+    # Prérequis, vérifiés avant toute modification : acme.sh est installé
+    # (recette beryl `acme`) et nginx lit les vhosts des instances.
+    [ -x "$ACME_SH" ] || die "acme.sh absent ($ACME_SH) : installez-le (recette beryl « acme »)"
     grep -Eq '^[[:space:]]*include[[:space:]]+partiduo/\*\.conf;' "$NGINX_DIR/nginx.conf" 2>/dev/null ||
       die "nginx.conf : « include partiduo/*.conf; » manque dans le bloc http ($NGINX_DIR/nginx.conf)"
     # Validation ensuite : rien n'est écrit si le fichier est refusé.
@@ -243,21 +251,29 @@ case "$command" in
     # Tâches quotidiennes (cron(8), champ utilisateur).
     "$INSTALL" -d -m 755 "$CRON_DIR"
     "$INSTALL" -m 644 "$work/cron" "$CRON_DIR/partiduo-$slug"
-    # Certificat : vhost d'amorçage (défi HTTP-01), certbot, vhost définitif.
+    # Certificat : vhost d'amorçage (défi HTTP-01), acme.sh, vhost définitif.
     "$INSTALL" -d -m 755 "$ACME_WEBROOT" "$NGINX_DIR/partiduo"
     "$INSTALL" -m 644 "$work/acme.conf" "$NGINX_DIR/partiduo/$slug.conf"
-    if [ ! -f "$LIVE_DIR/$host/fullchain.pem" ]; then
+    if [ ! -f "$CERT_DIR/$host/fullchain.pem" ]; then
       "$NGINX" -t
       "$SERVICE" nginx reload
     fi
-    if [ -n "$ACME_EMAIL" ]; then
-      set -- --email "$ACME_EMAIL"
-    else
-      set -- --register-unsafely-without-email
-    fi
-    [ "$ACME_STAGING" = 0 ] || set -- "$@" --test-cert
-    "$CERTBOT" certonly --webroot -w "$ACME_WEBROOT" -d "$host" --cert-name "$host" --keep-until-expiring \
-      --non-interactive --agree-tos "$@" --deploy-hook 'service nginx reload'
+    if [ "$ACME_STAGING" = 0 ]; then acme_server=letsencrypt; else acme_server=letsencrypt_test; fi
+    # Compte ACME avec adresse ; sans adresse, acme.sh en enregistre un sans courriel.
+    [ -z "$ACME_EMAIL" ] ||
+      "$ACME_SH" --register-account -m "$ACME_EMAIL" --server "$acme_server" --home "$ACME_HOME"
+    # 0 : émis ; 2 : encore valide, rien à faire (pas de réémission, quota
+    # Let's Encrypt préservé quand on rejoue) ; sinon : échec.
+    acme_status=0
+    "$ACME_SH" --issue --server "$acme_server" -d "$host" -w "$ACME_WEBROOT" --home "$ACME_HOME" \
+      --keylength ec-256 || acme_status=$?
+    case "$acme_status" in 0 | 2) ;; *) die "acme.sh --issue : échec (code $acme_status)" ;; esac
+    # Installation : le reloadcmd est persisté par acme.sh et rejoué par son
+    # cron à chaque renouvellement.
+    "$INSTALL" -d -m 755 "$CERT_DIR/$host"
+    "$ACME_SH" --install-cert -d "$host" --ecc --home "$ACME_HOME" \
+      --fullchain-file "$CERT_DIR/$host/fullchain.pem" --key-file "$CERT_DIR/$host/privkey.pem" \
+      --reloadcmd 'service nginx reload'
     "$INSTALL" -m 644 "$work/vhost.conf" "$NGINX_DIR/partiduo/$slug.conf"
     "$NGINX" -t
     "$SERVICE" nginx reload
@@ -278,7 +294,10 @@ case "$command" in
       esac
     done
     rm -f "$CRON_DIR/partiduo-$slug" "$NGINX_DIR/partiduo/$slug.conf" "$ETC_DIR/$slug.env"
-    "$CERTBOT" delete --cert-name "$slug.$DOMAIN" --non-interactive || true
+    # Le vhost retiré, le renouvellement échouerait : acme.sh oublie le
+    # certificat, puis le certificat installé est supprimé.
+    "$ACME_SH" --remove -d "$slug.$DOMAIN" --ecc --home "$ACME_HOME" || true
+    rm -rf "${CERT_DIR:?}/$slug.$DOMAIN"
     "$SERVICE" nginx reload || true
     # Suppression définitive : fichiers de l'instance (pièces jointes
     # comprises) et fichiers produits par partiduo-provision. Les journaux
@@ -299,8 +318,9 @@ case "$command" in
     [ $# -eq 2 ] || die "usage : cert HÔTE exists|enddate"
     check_host "$1"
     case "$2" in
-      exists) exec test -f "$LIVE_DIR/$1/fullchain.pem" ;;
-      enddate) exec "$OPENSSL" x509 -enddate -noout -in "$LIVE_DIR/$1/cert.pem" ;;
+      exists) exec test -f "$CERT_DIR/$1/fullchain.pem" ;;
+      # Premier certificat du fullchain : celui de l'instance.
+      enddate) exec "$OPENSSL" x509 -enddate -noout -in "$CERT_DIR/$1/fullchain.pem" ;;
       *) die "commande refusée" ;;
     esac
     ;;

@@ -449,8 +449,13 @@ de `partiduo-provision` : environnement `/usr/local/etc/partiduo/<dossier>.env`
 `service partiduo[_devel] start <dossier>`, tâche quotidienne
 `/usr/local/etc/cron.d/partiduo-<dossier>`, vhost
 `/usr/local/etc/nginx/partiduo/<dossier>.conf` et certificat Let's Encrypt
-(`/usr/local/etc/letsencrypt/live/<hôte>/`, défi HTTP-01 sur
-`/usr/local/www/letsencrypt`, `--deploy-hook 'service nginx reload'`).
+par acme.sh, comme sur le parc beryl (`/usr/local/etc/ssl/acme/<hôte>/`,
+défi HTTP-01 sur `/usr/local/www/letsencrypt`, `--reloadcmd 'service nginx
+reload'` rejoué par le cron de renouvellement d'acme.sh ; un certificat
+encore valide n'est pas réémis). Prérequis : acme.sh
+(`/usr/local/sbin/acme.sh`) et son cron, installés par la recette beryl
+`acme` ; l'enveloppe refuse l'installation, avant toute écriture, s'il
+manque.
 
 Serveur de l'administration, après `pkg install partiduo-admin` :
 
