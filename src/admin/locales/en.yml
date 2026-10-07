@@ -110,10 +110,8 @@ en:
       recovery_left:
         one: "%{count} recovery code left."
         other: "%{count} recovery codes left."
-      recovery_generated:
-        one: "%{count} recovery code generated."
-        other: "%{count} recovery codes generated: regenerate them to see them."
       recovery_regenerate: "Regenerate the codes"
+      recovery_elevate: "To regenerate your codes, first elevate your session: use your passkey or your authentication code above."
       continue: "Continue"
     dashboard:
       title: "Dashboard"

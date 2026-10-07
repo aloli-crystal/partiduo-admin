@@ -59,6 +59,7 @@
 <section class="pd-panel" aria-labelledby="pd-recovery-title">
   <h2 id="pd-recovery-title">{% translate "admin.account.recovery_title" %}</h2>
   <p class="mb-2">{% translate "admin.account.recovery_left" count: recovery_left %}</p>
-  {% if elevated %}<form method="post" action="{% url 'account_recovery_codes' %}">{% csrf_input %}<button class="button" type="submit">{% translate "admin.account.recovery_regenerate" %}</button></form>{% endif %}
+  {% if elevated %}<form method="post" action="{% url 'account_recovery_codes' %}">{% csrf_input %}<button class="button" type="submit">{% translate "admin.account.recovery_regenerate" %}</button></form>
+  {% else %}<p class="help" data-recovery-elevate>{% translate "admin.account.recovery_elevate" %}</p>{% endif %}
 </section>
 {% endblock content %}

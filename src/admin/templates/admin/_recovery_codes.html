@@ -1,0 +1,5 @@
+{# SPDX-License-Identifier: AGPL-3.0-or-later. Codes de récupération, affichés une seule fois (ADR-002 D7) : fragment commun à la page dédiée et à l'enregistrement d'une clé d'accès. #}
+<h1 class="pd-auth-title" tabindex="-1">{% translate "admin.account.recovery_title" %}</h1>
+<p class="mb-3" role="status">{% translate "admin.account.recovery_once" %}</p>
+<ul class="pd-codes mb-4">{% for code in codes %}<li>{{ code }}</li>{% endfor %}</ul>
+<a class="button is-primary" href="{% url 'account' %}">{% translate "admin.account.continue" %}</a>

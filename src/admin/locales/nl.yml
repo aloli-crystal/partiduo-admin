@@ -110,10 +110,8 @@ nl:
       recovery_left:
         one: "%{count} herstelcode over."
         other: "%{count} herstelcodes over."
-      recovery_generated:
-        one: "%{count} herstelcode gegenereerd."
-        other: "%{count} herstelcodes gegenereerd: genereer ze opnieuw om ze te zien."
       recovery_regenerate: "Codes opnieuw genereren"
+      recovery_elevate: "Om uw codes opnieuw te genereren, verhoog eerst uw sessie: gebruik hierboven uw toegangssleutel of uw authenticatiecode."
       continue: "Doorgaan"
     dashboard:
       title: "Dashboard"

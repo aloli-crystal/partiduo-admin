@@ -110,10 +110,8 @@ fr:
       recovery_left:
         one: "%{count} code de récupération restant."
         other: "%{count} codes de récupération restants."
-      recovery_generated:
-        one: "%{count} code de récupération généré."
-        other: "%{count} codes de récupération générés : régénérez-les pour les voir."
       recovery_regenerate: "Régénérer les codes"
+      recovery_elevate: "Pour régénérer vos codes, élevez d'abord votre session : utilisez votre clé d'accès ou votre code d'authentification ci-dessus."
       continue: "Continuer"
     dashboard:
       title: "Tableau de bord"

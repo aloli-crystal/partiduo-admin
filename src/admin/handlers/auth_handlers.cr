@@ -213,8 +213,12 @@ module PartiduoAdmin
       codes = Auth::RecoveryCodes.ensure(current)
       Audit.log(current, "account.passkey", target: current, ip: ip)
       flash["success"] = I18n.t("admin.account.passkey_added")
-      flash["info"] = I18n.t("admin.account.recovery_generated", count: codes.size) unless codes.empty?
-      json({"ok" => true, "redirect" => "/account"}.to_json)
+      return json({"ok" => true, "redirect" => "/account"}.to_json) if codes.empty?
+      # Premiers codes de récupération : montrés tout de suite, une seule
+      # fois (ils n'existent qu'à cet instant en clair), comme après
+      # l'activation du TOTP. `passkey.js` remplace le contenu de la page.
+      html = Marten.templates.get_template("admin/_recovery_codes.html").render({"codes" => codes})
+      json({"ok" => true, "html" => html}.to_json)
     rescue error : Auth::Passkeys::Error
       json({"ok" => false, "error" => I18n.t(error.key)}.to_json, status: 422)
     end

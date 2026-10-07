@@ -90,9 +90,21 @@ describe "Authentification de l'administration" do
     registered = JSON.parse(browser.post("/account/passkey", authenticator.register(options)).content)
     registered["ok"].as_bool.should be_true
     PartiduoAdmin::Auth::RecoveryCodes.remaining(root).should eq(10)
+    # Les premiers codes sont montrés aussitôt, une seule fois, et non
+    # générés sans être vus.
+    shown = registered["html"].as_s
+    shown.should contain("Codes de récupération")
+    shown.scan(/<li>[^<]+<\/li>/).size.should eq(10)
+    registered["redirect"]?.should be_nil
+    # Sans session élevée : pas de bouton, mais la marche à suivre.
+    unelevated = browser.get("/account").content
+    unelevated.should_not contain("Régénérer les codes")
+    unelevated.should contain("data-recovery-elevate")
+    unelevated.should contain("abord votre session")
 
     elevation = browser.post("/account/elevate/options").content
     JSON.parse(browser.post("/account/elevate", authenticator.assert(elevation)).content)["ok"].as_bool.should be_true
+    browser.get("/account").content.should contain("Régénérer les codes")
     browser.get("/").status.should eq(200)
 
     fresh = AdminSpec::Browser.new
