@@ -85,7 +85,8 @@ module PartiduoAdmin
     CODE = /\A[a-z][a-z0-9_]*\z/
 
     # Paquet FreeBSD qui sert une instance : `app` (`partiduo-app`) ou
-    # `devel` (`partiduo-app-devel`) ; les deux cohabitent sur un serveur.
+    # `devel` (`partiduo-app-devel`), exclusifs : un seul par serveur, aux
+    # mêmes emplacements.
     # Liste fermée : la valeur choisit un paquet, jamais un chemin.
     PACKAGES = %w[app devel]
 

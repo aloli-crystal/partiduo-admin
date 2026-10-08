@@ -7,7 +7,8 @@
 # commentées : celles par défaut.
 DOMAIN=partiduo.app
 # Environnement et données des instances : ceux que lit le script rc.d des
-# paquets (partiduo, partiduo_devel) ; ne pas les changer.
+# paquets (partiduo-app ou partiduo-app-devel, même script partiduo) ; ne pas
+# les changer.
 #ETC_DIR=/usr/local/etc/partiduo
 #DATA_DIR=/var/db/partiduo
 # Compte système des instances et rôle PostgreSQL propriétaire des bases
@@ -21,12 +22,14 @@ DOMAIN=partiduo.app
 # Fichiers produits par partiduo-provision (compte des instances,
 # partiduo:partiduo 0750), relus par root à l'installation.
 #STAGE_DIR=/var/db/partiduo-stage
-# Certificats Let's Encrypt (acme.sh de la recette beryl `acme`, défi
-# HTTP-01 ; installés dans /usr/local/etc/ssl/acme/<hôte>/). ACME_EMAIL :
+# Certificats Let's Encrypt (acme.sh de la recette beryl `acme`, conventions
+# du port FreeBSD : utilisateur acme, certificat laissé dans
+# /var/db/acme/certs/<hôte>_ecc/ ; défi HTTP-01). ACME_EMAIL :
 # compte ACME avec adresse (vide : compte sans courriel) ; ACME_STAGING=1 :
 # autorité de test (n'entame pas le quota).
 ACME_EMAIL=
 #ACME_WEBROOT=/usr/local/www/letsencrypt
 #ACME_STAGING=0
 # Gabarits : ceux du paquet de l'instance
-# (/usr/local/lib/partiduo[-devel]/deploy/templates), pas de réglage.
+# (/usr/local/lib/partiduo/deploy/templates, partiduo-app ou
+# partiduo-app-devel), pas de réglage.

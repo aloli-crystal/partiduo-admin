@@ -71,15 +71,17 @@ deux personnes).
 == Paquet d'un dossier
 
 Les serveurs d'hébergement sont sous FreeBSD ; les instances Partiduo y
-sont installées par deux paquets qui cohabitent : `partiduo-app`
-(production) et `partiduo-app-devel` (développement). Chaque dossier est
-servi par l'un des deux, son *paquet* (`app` ou `devel`), choisi à la
+sont installées par l'un de deux paquets exclusifs, aux mêmes emplacements :
+`partiduo-app` (production) ou `partiduo-app-devel` (développement, sur le
+serveur de test) ; une seule version par serveur. Chaque dossier porte le
+paquet attendu sur son serveur, son *paquet* (`app` ou `devel`), choisi à la
 création (`app` par défaut) et affiché sur la fiche et la liste des
 dossiers ; une restauration dans une instance neuve garde le paquet du
 dossier restauré. Chaque tâche d'un dossier transmet son paquet à
-l'exécutant (paramètre `package`), qui ne s'en sert que pour une instance
-pas encore déclarée sur le serveur (création, instance neuve) : ensuite,
-c'est le paquet qui la sert.
+l'exécutant (paramètre `package`), qui le compare au paquet installé pour
+une instance pas encore déclarée sur le serveur (création, instance neuve)
+et refuse la tâche s'il diffère : ensuite, c'est le paquet du serveur qui la
+sert.
 
 La *mise à jour des paquets* n'est pas l'affaire de l'administration : beryl
 fait le `pkg upgrade` sur tous les serveurs, et le script rc.d de chaque
@@ -308,10 +310,11 @@ ni vhost, ni service rc.d, ni Let's Encrypt — les fichiers de service sont
 produits dans `--work-dir`, l'arrêt d'un service est un fichier témoin.
 `--manage` et `--provision` désignent les outils du paquet `app` (défaut :
 `/usr/local/bin/partiduo-manage` et `partiduo-provision`, liens du paquet
-`partiduo-app`), `--manage-devel` et `--provision-devel` ceux du paquet
-`devel` (défaut : `/usr/local/bin/partiduo-devel-manage` et
-`partiduo-devel-provision` ; vides, ceux de `app`) ; le paquet d'une
-instance est retenu dans le fichier `PACKAGE` de son répertoire.
+`partiduo-app` ou `partiduo-app-devel`, installés aux mêmes emplacements),
+`--manage-devel` et `--provision-devel` ceux du paquet `devel` (défaut :
+vides, ceux de `app` ; à fournir seulement pour essayer deux versions côte à
+côte hors paquet) ; le paquet d'une instance est retenu dans le fichier
+`PACKAGE` de son répertoire.
 
 `production`::
 Serveur d'hébergement FreeBSD : `/usr/local/bin/sudo -n` limité par
@@ -321,13 +324,14 @@ Serveur d'hébergement FreeBSD : `/usr/local/bin/sudo -n` limité par
 : `partiduo-agent-root` (installation et retrait d'une instance, service
 par `service(8)`, certificat) et `partiduo-agent-instance` (interface
 d'instance, `partiduo-provision`, bases, sauvegardes, sous le compte des
-instances, propriétaire des bases). Le paquet qui sert une instance
-(`partiduo-app` ou `partiduo-app-devel`) est celui dont la liste de
-`rc.conf` la déclare (`partiduo_instances` ou `partiduo_devel_instances`) ;
-les enveloppes refusent une instance déclarée dans les deux listes, ou un
-paquet contraire à sa déclaration. `--domain` est obligatoire : l'hôte et la
-base de chaque tâche sont recalculés depuis le sous-domaine (D-AFN-002,
-D-AFN-004, D-AFN-005).
+instances, propriétaire des bases). Une seule version par serveur : le
+paquet qui sert les instances est celui qui y est installé (`partiduo-app`
+ou `partiduo-app-devel`, exclusifs, aux mêmes emplacements), et les
+instances sont déclarées dans `partiduo_instances` (`rc.conf`) ; les
+enveloppes refusent un paquet absent du serveur, ou une instance non
+déclarée quand la tâche ne précise pas de paquet. `--domain` est
+obligatoire : l'hôte et la base de chaque tâche sont recalculés depuis le
+sous-domaine (D-AFN-002, D-AFN-004, D-AFN-005).
 
 *Invitations remises par le serveur* (tous modes, recommandé en production) :
 `--mail-command "/usr/sbin/sendmail -oi" --mail-from noreply@partiduo.app`.
@@ -391,8 +395,8 @@ l'arbre de ports aloli-ports :
   `/usr/local/etc/sudoers.d/partiduo-agent` et son script rc.d
   `partiduo_agent` ;
 * `finance/partiduo-app` et `finance/partiduo-app-devel` : les instances
-  (`/usr/local/lib/partiduo`, `/usr/local/lib/partiduo-devel`, scripts rc.d
-  `partiduo` et `partiduo_devel`), que l'exécutant installe avec leur
+  (l'un ou l'autre, exclusifs : `/usr/local/lib/partiduo`, script rc.d
+  `partiduo`), que l'exécutant installe avec leur
   `partiduo-provision`, leurs gabarits (`deploy/templates/`) et leur
   `partiduo-manage`. Les paquets sont mis à jour par beryl, pas par
   l'exécutant : le script rc.d d'une instance passe ses migrations avant
@@ -406,7 +410,8 @@ paquets créent les comptes système (`partiduo` par `partiduo-app`,
 (de même pour `partiduo-admin`).
 
 Serveur d'hébergement, après `pkg install partiduo-agent partiduo-app`
-(et `partiduo-app-devel` au besoin), en root :
+(`partiduo-agent-devel partiduo-app-devel` sur le serveur de test), en
+root :
 
 [source,sh]
 ----
@@ -445,17 +450,21 @@ de `partiduo-provision` : environnement `/usr/local/etc/partiduo/<dossier>.env`
 (root:partiduo 0640, relu et validé clé par clé), données
 `/var/db/partiduo/<dossier>` (pièces jointes dans `media/`), journal
 `/var/log/partiduo/<dossier>.log`, déclaration dans `rc.conf`
-(`partiduo_instances` ou `partiduo_devel_instances`, `…_enable=YES`),
-`service partiduo[_devel] start <dossier>`, tâche quotidienne
+(`partiduo_instances`, `partiduo_enable=YES`),
+`service partiduo start <dossier>`, tâche quotidienne
 `/usr/local/etc/cron.d/partiduo-<dossier>`, vhost
 `/usr/local/etc/nginx/partiduo/<dossier>.conf` et certificat Let's Encrypt
-par acme.sh, comme sur le parc beryl (`/usr/local/etc/ssl/acme/<hôte>/`,
-défi HTTP-01 sur `/usr/local/www/letsencrypt`, `--reloadcmd 'service nginx
-reload'` rejoué par le cron de renouvellement d'acme.sh ; un certificat
-encore valide n'est pas réémis). Prérequis : acme.sh
-(`/usr/local/sbin/acme.sh`) et son cron, installés par la recette beryl
-`acme` ; l'enveloppe refuse l'installation, avant toute écriture, s'il
-manque.
+par acme.sh, comme sur le parc beryl et selon les conventions du port
+FreeBSD `security/acme.sh` : acme.sh sous l'utilisateur `acme` (`su -m`),
+jamais en root, home `/var/db/acme/.acme.sh`, certificat laissé dans
+`/var/db/acme/certs/<hôte>_ecc/` (`fullchain.cer`, `<hôte>.key`), défi
+HTTP-01 sur `/usr/local/www/letsencrypt` (possédé par `acme`),
+`--reloadcmd '/usr/local/bin/sudo /usr/sbin/service nginx reload'` rejoué
+par le cron de renouvellement `/usr/local/etc/cron.d/acme` ; un certificat
+encore valide n'est pas réémis. Prérequis : acme.sh
+(`/usr/local/sbin/acme.sh`), l'utilisateur `acme`, son cron et la règle
+`/usr/local/etc/sudoers.d/acme`, posés par la recette beryl `acme` ;
+l'enveloppe refuse l'installation, avant toute écriture, s'il en manque un.
 
 Serveur de l'administration, après `pkg install partiduo-admin` :
 

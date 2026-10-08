@@ -46,14 +46,16 @@ module PartiduoAgent
     property work_dir : String = File.join(Dir.tempdir, "partiduo-agent")
     property backup_dir : String = "/var/backups/partiduo"
     # Mode local : outils des paquets `app` (`partiduo-app`) et `devel`
-    # (`partiduo-app-devel`), liens installés par les paquets dans
-    # /usr/local/bin ; ceux de `devel` vides : ceux de `app`. En production,
-    # les enveloppes prennent ceux du paquet de l'instance
-    # (/usr/local/lib/partiduo[-devel]/bin).
+    # (`partiduo-app-devel`). Les deux paquets s'installent aux mêmes
+    # emplacements (un seul par serveur) : par défaut, leurs liens de
+    # /usr/local/bin ; ceux de `devel` vides : ceux de `app` (à fournir
+    # seulement pour essayer deux versions côte à côte hors paquet). En
+    # production, les enveloppes prennent ceux du paquet installé
+    # (/usr/local/lib/partiduo/bin).
     property manage : String = ENV["PARTIDUO_MANAGE"]? || "/usr/local/bin/partiduo-manage"
     property provision : String = ENV["PARTIDUO_PROVISION"]? || "/usr/local/bin/partiduo-provision"
-    property manage_devel : String = ENV["PARTIDUO_MANAGE_DEVEL"]? || "/usr/local/bin/partiduo-devel-manage"
-    property provision_devel : String = ENV["PARTIDUO_PROVISION_DEVEL"]? || "/usr/local/bin/partiduo-devel-provision"
+    property manage_devel : String = ENV["PARTIDUO_MANAGE_DEVEL"]? || ""
+    property provision_devel : String = ENV["PARTIDUO_PROVISION_DEVEL"]? || ""
     property system_user : String = "partiduo"
     # Domaine des dossiers de ce serveur (`<sous-domaine>.<domaine>`) : les
     # hôtes reçus de l'administration doivent lui correspondre (D-AFN-004).

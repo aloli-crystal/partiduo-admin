@@ -4,8 +4,9 @@
 # partiduo-agent-instance — enveloppe des gestes que l'exécutant fait sous le
 # compte des instances (`partiduo`), seule commande que sudoers lui permet
 # sous ce compte (deploy/partiduo-agent.sudoers, D-AFN-002). Serveur
-# FreeBSD : instances servies par les paquets partiduo-app
-# (/usr/local/lib/partiduo) et partiduo-app-devel (/usr/local/lib/partiduo-devel).
+# FreeBSD : instances servies par le paquet partiduo-app ou partiduo-app-devel,
+# exclusifs l'un de l'autre et installés aux mêmes emplacements
+# (/usr/local/lib/partiduo).
 #
 # Installée par root en 0755, possédée par root, dans
 # /usr/local/libexec/partiduo-agent/. Chaque argument est validé ici ; tout
@@ -14,7 +15,7 @@
 # Aucun argument n'est jamais évalué par un shell.
 #
 #   cli SLUG BASE|- PAQUET|- ACTION [ARGUMENTS…]    partiduo-manage instance ACTION
-#                                                   (PAQUET : app, devel, ou « - » : le paquet déclaré)
+#                                                   (PAQUET : app, devel, ou « - » : instance déclarée)
 #   provision SLUG [OPTIONS…] --package app|devel   partiduo-provision du paquet (options permises seulement)
 #   db-exists BASE                                  code 0 si la base existe, 3 sinon
 #   createdb BASE | dropdb BASE                     base du rôle des instances
@@ -24,11 +25,11 @@
 #   media-archive SLUG LISTE ARCHIVE|-              archive des pièces jointes
 #   media-restore SLUG ARCHIVE|-                    pièces jointes remises en place
 #
-# Paquet d'une instance : celui dont la liste de rc.conf la déclare
-# (partiduo_instances ou partiduo_devel_instances, lisibles sans root).
-# Déclarée dans les deux : refus. Déclarée dans aucune : refus, sauf paquet
-# explicite (création, restauration en instance neuve). Paquet explicite
-# contraire à la déclaration : refus.
+# Paquet d'une instance : celui installé sur le serveur (pkg, lisible sans
+# root). Un paquet explicite (création, restauration en instance neuve) doit
+# être celui-là ; sans paquet explicite (« - »), l'instance doit être
+# déclarée dans partiduo_instances (rc.conf, lisible sans root). Sinon :
+# refus.
 set -eu
 PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 export PATH
@@ -63,6 +64,7 @@ ACME_WEBROOT=/usr/local/www/letsencrypt
 ACME_STAGING=0
 # Outils, par chemin absolu (surchargeables pour les essais seulement).
 SYSRC=/usr/sbin/sysrc
+PKG=/usr/sbin/pkg
 PSQL=/usr/local/bin/psql
 CREATEDB=/usr/local/bin/createdb
 DROPDB=/usr/local/bin/dropdb
@@ -97,36 +99,47 @@ check_backup_path() {
 
 media_root() { echo "$DATA_DIR/$1/media"; }
 
-# --- Paquet d'une instance (rc.conf) ---------------------------------------------
+# --- Paquet d'une instance (pkg, rc.conf) ----------------------------------------
 
 # Valeur d'une variable de rc.conf ; vide si elle n'est pas définie.
 rc_value() {
   "$SYSRC" -n "$1" 2>/dev/null | tr '\t\n' '  ' || true
 }
 
-# Paquet qui sert l'instance $1 : app ou devel, d'après rc.conf ; $2 : paquet
-# explicite (app, devel) ou « - » (le paquet déclaré).
-resolve_package() {
-  explicit="$2"
-  case "$explicit" in app | devel | -) ;; *) die "paquet refusé" ;; esac
-  declared=""
-  case " $(rc_value partiduo_instances) " in *" $1 "*) declared=app ;; esac
-  case " $(rc_value partiduo_devel_instances) " in
-    *" $1 "*) [ -z "$declared" ] || die "instance déclarée dans les deux paquets (partiduo_instances et partiduo_devel_instances) : $1"
-      declared=devel ;;
-  esac
-  if [ -z "$declared" ]; then
-    [ "$explicit" != - ] || die "instance non déclarée dans rc.conf : $1"
-    echo "$explicit"
+# Paquet installé sur le serveur : app (partiduo-app) ou devel
+# (partiduo-app-devel). Les deux s'excluent et s'installent aux mêmes
+# emplacements : une seule version par serveur.
+installed_package() {
+  if "$PKG" info -q -e partiduo-app-devel; then
+    echo devel
+  elif "$PKG" info -q -e partiduo-app; then
+    echo app
   else
-    [ "$explicit" = - ] || [ "$explicit" = "$declared" ] || die "paquet $explicit contraire à la déclaration de $1 ($declared)"
-    echo "$declared"
+    die "ni partiduo-app ni partiduo-app-devel n'est installé"
   fi
 }
 
-# Répertoire d'un paquet (bin/partiduo-manage, bin/partiduo-provision,
-# deploy/templates), installé par pkg et possédé par root.
-package_dir() { if [ "$1" = devel ]; then echo "$LIB_DIR/partiduo-devel"; else echo "$LIB_DIR/partiduo"; fi; }
+# Paquet qui sert l'instance $1 : celui du serveur ; $2 : paquet attendu
+# (app, devel) ou « - » (instance déclarée dans partiduo_instances).
+resolve_package() {
+  explicit="$2"
+  case "$explicit" in app | devel | -) ;; *) die "paquet refusé" ;; esac
+  installed=$(installed_package) || exit 2
+  if [ "$explicit" = - ]; then
+    case " $(rc_value partiduo_instances) " in
+      *" $1 "*) ;;
+      *) die "instance non déclarée dans rc.conf : $1" ;;
+    esac
+  else
+    [ "$explicit" = "$installed" ] || die "paquet $explicit absent du serveur (paquet installé : $installed)"
+  fi
+  echo "$installed"
+}
+
+# Répertoire des paquets, le même pour app et devel (bin/partiduo-manage,
+# bin/partiduo-provision, deploy/templates), installé par pkg et possédé par
+# root.
+PACKAGE_DIR="$LIB_DIR/partiduo"
 
 # --- Gestes ----------------------------------------------------------------------
 
@@ -154,8 +167,8 @@ case "$command" in
       esac
     done
     [ "$expect_path" = 0 ] || die "--list-file : chemin manquant"
-    package=$(resolve_package "$slug" "$package") || exit 2
-    manage="$(package_dir "$package")/bin/partiduo-manage"
+    resolve_package "$slug" "$package" >/dev/null || exit 2
+    manage="$PACKAGE_DIR/bin/partiduo-manage"
     env_file="$ETC_DIR/$slug.env"
     if [ -f "$env_file" ]; then
       set -a
@@ -213,9 +226,9 @@ case "$command" in
     done
     shift
     [ -n "$package" ] || die "--package manquant"
-    # Instance déjà déclarée par l'autre paquet : refus.
-    package=$(resolve_package "$slug" "$package") || exit 2
-    dir=$(package_dir "$package")
+    # Paquet attendu absent du serveur : refus.
+    resolve_package "$slug" "$package" >/dev/null || exit 2
+    dir=$PACKAGE_DIR
     acme=""
     [ -z "$ACME_EMAIL" ] || acme="--acme-email=$ACME_EMAIL"
     staging=""

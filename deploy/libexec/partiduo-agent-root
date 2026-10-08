@@ -3,32 +3,34 @@
 #
 # partiduo-agent-root — enveloppe des gestes que l'exécutant fait en root,
 # seule commande root que sudoers lui permet (deploy/partiduo-agent.sudoers,
-# D-AFN-002). Serveur FreeBSD : instances servies par les paquets
-# partiduo-app (/usr/local/lib/partiduo, script rc.d `partiduo`) et
-# partiduo-app-devel (/usr/local/lib/partiduo-devel, `partiduo_devel`).
+# D-AFN-002). Serveur FreeBSD : instances servies par le paquet
+# partiduo-app ou partiduo-app-devel, exclusifs l'un de l'autre et installés
+# aux mêmes emplacements (/usr/local/lib/partiduo, script rc.d `partiduo`).
 #
 # Installée par root en 0755, possédée par root, dans
 # /usr/local/libexec/partiduo-agent/. Elle ne prend que des sous-domaines
 # (ou l'hôte `<sous-domaine>.<DOMAIN>`) et un paquet (app ou devel), validés
 # ici. Elle n'exécute aucun fichier écrit par un autre compte : la tâche cron
-# et les vhosts sont produits ici depuis les gabarits du paquet de l'instance
+# et les vhosts sont produits ici depuis les gabarits du paquet installé
 # (installés par pkg, possédés par root) ; le fichier d'environnement
 # produit par partiduo-provision est relu ligne à ligne, clé par clé, jamais
 # évalué, avant d'être installé. Mêmes gestes que l'INSTALL.txt de
 # partiduo-provision (D-CLI-007), certificat par acme.sh comme sur le parc
-# beryl (D-PKG-007 de partiduo-app : recette beryl `acme`, home
-# /usr/local/etc/acme.sh dont le cron renouvelle les certificats).
+# beryl (D-PKG-007 de partiduo-app : recette beryl `acme`, conventions du
+# port FreeBSD security/acme.sh — utilisateur acme, home
+# /var/db/acme/.acme.sh dont le cron /usr/local/etc/cron.d/acme renouvelle
+# les certificats, laissés dans CERT_HOME /var/db/acme/certs).
 #
 #   install SLUG app|devel|-      environnement, rc.conf, service, cron, vhost, certificat
 #   remove SLUG                   service, rc.conf, cron, vhost, environnement, certificat, fichiers
 #   service SLUG start|stop|status  service de l'instance (status : code 0 si elle tourne)
 #   cert HÔTE exists|enddate      certificat Let's Encrypt de l'instance
-#                                 (/usr/local/etc/ssl/acme/HÔTE/fullchain.pem)
+#                                 (/var/db/acme/certs/HÔTE_ecc/fullchain.cer)
 #
-# Paquet d'une instance : celui dont la liste de rc.conf la déclare
-# (partiduo_instances ou partiduo_devel_instances). Déclarée dans les deux :
-# refus. Déclarée dans aucune : refus, sauf paquet explicite (install d'une
-# instance neuve). Paquet explicite contraire à la déclaration : refus.
+# Paquet d'une instance : celui installé sur le serveur (pkg). Un paquet
+# explicite (install d'une instance neuve) doit être celui-là ; sans paquet
+# explicite (« - »), l'instance doit être déclarée dans partiduo_instances
+# (rc.conf). Sinon : refus.
 set -eu
 PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 export PATH
@@ -61,13 +63,18 @@ ACME_WEBROOT=/usr/local/www/letsencrypt
 ACME_STAGING=0
 # Outils, par chemin absolu (surchargeables pour les essais seulement).
 SYSRC=/usr/sbin/sysrc
+PKG=/usr/sbin/pkg
 SERVICE=/usr/sbin/service
 ACME_SH=/usr/local/sbin/acme.sh
+SU=/usr/bin/su
+# Utilisateur d'acme.sh, créé par le paquet (conventions du port) : acme.sh
+# ne tourne jamais en root (surchargeable pour les essais seulement).
+ACME_USER=acme
 NGINX=/usr/local/sbin/nginx
 OPENSSL=/usr/bin/openssl
 INSTALL=/usr/bin/install
 # Essais : préfixe des chemins système (/usr/local/etc, /usr/local/lib,
-# /var/log). Vide en production.
+# /var/log, /var/db/acme). Vide en production.
 SYSTEM_ROOT=""
 # shellcheck disable=SC1090
 . "$CONF"
@@ -75,13 +82,37 @@ SYSTEM_ROOT=""
 
 LIB_DIR="$SYSTEM_ROOT/usr/local/lib"
 NGINX_DIR="$SYSTEM_ROOT/usr/local/etc/nginx"
-# acme.sh : home du cron de renouvellement (recette beryl `acme`) et
-# certificats installés, un répertoire par hôte.
-ACME_HOME="$SYSTEM_ROOT/usr/local/etc/acme.sh"
-CERT_DIR="$SYSTEM_ROOT/usr/local/etc/ssl/acme"
+# acme.sh (conventions du port FreeBSD, recette beryl `acme`) : home du cron
+# de renouvellement, CERT_HOME (un répertoire <hôte>_ecc par certificat, clé
+# EC) et règle sudo par laquelle acme recharge nginx.
+ACME_HOME="$SYSTEM_ROOT/var/db/acme/.acme.sh"
+CERT_HOME="$SYSTEM_ROOT/var/db/acme/certs"
+ACME_SUDOERS="$SYSTEM_ROOT/usr/local/etc/sudoers.d/acme"
+# Rejoué par le cron d'acme.sh (PATH limité) : chemins absolus.
+ACME_RELOADCMD="/usr/local/bin/sudo /usr/sbin/service nginx reload"
 CRON_DIR="$SYSTEM_ROOT/usr/local/etc/cron.d"
 # Journal des instances : fixé par le script rc.d des paquets.
 LOG_DIR="$SYSTEM_ROOT/var/log/partiduo"
+
+# Certificat d'un hôte dans CERT_HOME.
+cert_file() {
+  printf '%s\n' "$CERT_HOME/${1}_ecc/fullchain.cer"
+}
+
+# acme.sh sous l'utilisateur acme (su -m, comme la primitive beryl
+# `acme-cert`), jamais en root. su confie la commande à un shell : chaque
+# argument y est cité.
+acme_sh() {
+  command_line=$(shell_quote "$ACME_SH")
+  for argument in "$@"; do
+    command_line="$command_line $(shell_quote "$argument")"
+  done
+  "$SU" -m "$ACME_USER" -c "$command_line"
+}
+
+shell_quote() {
+  printf "'%s'" "$(printf '%s' "$1" | sed "s/'/'\\\\''/g")"
+}
 
 check_slug() {
   printf '%s' "$1" | grep -Eq '^[a-z][a-z0-9-]{0,39}$' || die "sous-domaine invalide"
@@ -94,36 +125,46 @@ check_host() {
   check_slug "${1%."$DOMAIN"}"
 }
 
-# --- Paquet d'une instance (rc.conf) ---------------------------------------------
+# --- Paquet d'une instance (pkg, rc.conf) ----------------------------------------
 
 # Valeur d'une variable de rc.conf ; vide si elle n'est pas définie.
 rc_value() {
   "$SYSRC" -n "$1" 2>/dev/null | tr '\t\n' '  ' || true
 }
 
-# Paquet qui sert l'instance $1 : app ou devel, d'après rc.conf ; $2 : paquet
-# explicite (app, devel) ou « - » (le paquet déclaré).
-resolve_package() {
-  explicit="$2"
-  case "$explicit" in app | devel | -) ;; *) die "paquet refusé" ;; esac
-  declared=""
-  case " $(rc_value partiduo_instances) " in *" $1 "*) declared=app ;; esac
-  case " $(rc_value partiduo_devel_instances) " in
-    *" $1 "*) [ -z "$declared" ] || die "instance déclarée dans les deux paquets (partiduo_instances et partiduo_devel_instances) : $1"
-      declared=devel ;;
-  esac
-  if [ -z "$declared" ]; then
-    [ "$explicit" != - ] || die "instance non déclarée dans rc.conf : $1"
-    echo "$explicit"
+# Paquet installé sur le serveur : app (partiduo-app) ou devel
+# (partiduo-app-devel). Les deux s'excluent et s'installent aux mêmes
+# emplacements : une seule version par serveur.
+installed_package() {
+  if "$PKG" info -q -e partiduo-app-devel; then
+    echo devel
+  elif "$PKG" info -q -e partiduo-app; then
+    echo app
   else
-    [ "$explicit" = - ] || [ "$explicit" = "$declared" ] || die "paquet $explicit contraire à la déclaration de $1 ($declared)"
-    echo "$declared"
+    die "ni partiduo-app ni partiduo-app-devel n'est installé"
   fi
 }
 
-# Répertoire (sous /usr/local/lib) et script rc.d d'un paquet.
-package_name() { if [ "$1" = devel ]; then echo partiduo-devel; else echo partiduo; fi; }
-rc_name() { if [ "$1" = devel ]; then echo partiduo_devel; else echo partiduo; fi; }
+# Paquet qui sert l'instance $1 : celui du serveur ; $2 : paquet attendu
+# (app, devel) ou « - » (instance déclarée dans partiduo_instances).
+resolve_package() {
+  explicit="$2"
+  case "$explicit" in app | devel | -) ;; *) die "paquet refusé" ;; esac
+  installed=$(installed_package) || exit 2
+  if [ "$explicit" = - ]; then
+    case " $(rc_value partiduo_instances) " in
+      *" $1 "*) ;;
+      *) die "instance non déclarée dans rc.conf : $1" ;;
+    esac
+  else
+    [ "$explicit" = "$installed" ] || die "paquet $explicit absent du serveur (paquet installé : $installed)"
+  fi
+  echo "$installed"
+}
+
+# Répertoire et script rc.d des paquets, les mêmes pour app et devel.
+PACKAGE_DIR="$LIB_DIR/partiduo"
+RC_NAME=partiduo
 
 # Rend un gabarit {{CLÉ}} avec les variables TPL_CLÉ ; échoue si une clé
 # reste sans valeur.
@@ -208,12 +249,13 @@ case "$command" in
     slug="$1"
     check_slug "$slug"
     host="$slug.$DOMAIN"
-    package=$(resolve_package "$slug" "$2") || exit 2
-    rc=$(rc_name "$package")
-    package_dir="$LIB_DIR/$(package_name "$package")"
+    resolve_package "$slug" "$2" >/dev/null || exit 2
     # Prérequis, vérifiés avant toute modification : acme.sh est installé
-    # (recette beryl `acme`) et nginx lit les vhosts des instances.
+    # selon les conventions du port (recette beryl `acme` : utilisateur acme,
+    # règle sudo de rechargement de nginx) et nginx lit les vhosts des instances.
     [ -x "$ACME_SH" ] || die "acme.sh absent ($ACME_SH) : installez-le (recette beryl « acme »)"
+    { id "$ACME_USER" >/dev/null 2>&1 && [ -f "$ACME_SUDOERS" ]; } ||
+      die "utilisateur $ACME_USER ou $ACME_SUDOERS absent : appliquez la recette beryl « acme »"
     grep -Eq '^[[:space:]]*include[[:space:]]+partiduo/\*\.conf;' "$NGINX_DIR/nginx.conf" 2>/dev/null ||
       die "nginx.conf : « include partiduo/*.conf; » manque dans le bloc http ($NGINX_DIR/nginx.conf)"
     # Validation ensuite : rien n'est écrit si le fichier est refusé.
@@ -227,10 +269,10 @@ case "$command" in
     # Gabarits du paquet qui sert l'instance (installés par pkg, possédés
     # par root) : ceux de la version de partiduo-provision qui a produit
     # l'environnement.
-    templates="$package_dir/deploy/templates"
+    templates="$PACKAGE_DIR/deploy/templates"
     TPL_DOSSIER="$slug" TPL_HOST="$host" TPL_DOMAIN="$DOMAIN" TPL_PORT="$port" TPL_DATA_DIR="$DATA_DIR"
     TPL_ETC_DIR="$ETC_DIR" TPL_ENV_FILE="$ETC_DIR/$slug.env" TPL_SYSTEM_USER="$SYSTEM_USER" TPL_ACME_WEBROOT="$ACME_WEBROOT"
-    TPL_MANAGE_PATH="$package_dir/bin/partiduo-manage" TPL_DAILY_COMMAND=invoicing_month_end TPL_DAILY_MINUTE=$((port % 60))
+    TPL_MANAGE_PATH="$PACKAGE_DIR/bin/partiduo-manage" TPL_DAILY_COMMAND=invoicing_month_end TPL_DAILY_MINUTE=$((port % 60))
     export TPL_DOSSIER TPL_HOST TPL_DOMAIN TPL_PORT TPL_DATA_DIR TPL_ETC_DIR TPL_ENV_FILE TPL_SYSTEM_USER TPL_ACME_WEBROOT \
       TPL_MANAGE_PATH TPL_DAILY_COMMAND TPL_DAILY_MINUTE
     render "$templates/nginx-acme.conf.tmpl" "$work/acme.conf"
@@ -241,39 +283,43 @@ case "$command" in
     "$INSTALL" -o root -g "$SYSTEM_USER" -m 640 "$work/$slug.env" "$ETC_DIR/$slug.env"
     "$INSTALL" -d -o "$SYSTEM_USER" -g "$SYSTEM_USER" -m 750 "$DATA_DIR/$slug" "$DATA_DIR/$slug/media" "$LOG_DIR"
     # Service : script rc.d du paquet, une instance de plus (sans doublon).
-    case " $(rc_value "${rc}_instances") " in
+    case " $(rc_value "${RC_NAME}_instances") " in
       *" $slug "*) ;;
-      *) "$SYSRC" "${rc}_instances+= $slug" ;;
+      *) "$SYSRC" "${RC_NAME}_instances+= $slug" ;;
     esac
-    "$SYSRC" "${rc}_enable=YES"
+    "$SYSRC" "${RC_NAME}_enable=YES"
     # Rejouable : une instance qui tourne déjà n'est pas redémarrée.
-    "$SERVICE" "$rc" status "$slug" >/dev/null 2>&1 || "$SERVICE" "$rc" start "$slug"
+    "$SERVICE" "$RC_NAME" status "$slug" >/dev/null 2>&1 || "$SERVICE" "$RC_NAME" start "$slug"
     # Tâches quotidiennes (cron(8), champ utilisateur).
     "$INSTALL" -d -m 755 "$CRON_DIR"
     "$INSTALL" -m 644 "$work/cron" "$CRON_DIR/partiduo-$slug"
     # Certificat : vhost d'amorçage (défi HTTP-01), acme.sh, vhost définitif.
-    "$INSTALL" -d -m 755 "$ACME_WEBROOT" "$NGINX_DIR/partiduo"
+    # Les défis sont écrits par acme.sh : le webroot appartient à acme.
+    "$INSTALL" -d -o "$ACME_USER" -g "$ACME_USER" -m 755 "$ACME_WEBROOT"
+    "$INSTALL" -d -m 755 "$NGINX_DIR/partiduo"
     "$INSTALL" -m 644 "$work/acme.conf" "$NGINX_DIR/partiduo/$slug.conf"
-    if [ ! -f "$CERT_DIR/$host/fullchain.pem" ]; then
+    if [ ! -f "$(cert_file "$host")" ]; then
       "$NGINX" -t
       "$SERVICE" nginx reload
     fi
     if [ "$ACME_STAGING" = 0 ]; then acme_server=letsencrypt; else acme_server=letsencrypt_test; fi
     # Compte ACME avec adresse ; sans adresse, acme.sh en enregistre un sans courriel.
     [ -z "$ACME_EMAIL" ] ||
-      "$ACME_SH" --register-account -m "$ACME_EMAIL" --server "$acme_server" --home "$ACME_HOME"
+      acme_sh --register-account -m "$ACME_EMAIL" --server "$acme_server" --home "$ACME_HOME"
     # 0 : émis ; 2 : encore valide, rien à faire (pas de réémission, quota
     # Let's Encrypt préservé quand on rejoue) ; sinon : échec.
     acme_status=0
-    "$ACME_SH" --issue --server "$acme_server" -d "$host" -w "$ACME_WEBROOT" --home "$ACME_HOME" \
-      --keylength ec-256 || acme_status=$?
-    case "$acme_status" in 0 | 2) ;; *) die "acme.sh --issue : échec (code $acme_status)" ;; esac
-    # Installation : le reloadcmd est persisté par acme.sh et rejoué par son
-    # cron à chaque renouvellement.
-    "$INSTALL" -d -m 755 "$CERT_DIR/$host"
-    "$ACME_SH" --install-cert -d "$host" --ecc --home "$ACME_HOME" \
-      --fullchain-file "$CERT_DIR/$host/fullchain.pem" --key-file "$CERT_DIR/$host/privkey.pem" \
-      --reloadcmd 'service nginx reload'
+    acme_sh --issue --server "$acme_server" -d "$host" -w "$ACME_WEBROOT" --home "$ACME_HOME" \
+      --cert-home "$CERT_HOME" --keylength ec-256 || acme_status=$?
+    case "$acme_status" in
+      0 | 2) ;;
+      *) die "acme.sh --issue : échec (code $acme_status, journal /var/log/acme.sh.log)" ;;
+    esac
+    # Sans copie : le certificat reste dans CERT_HOME, où le vhost le lit ;
+    # acme.sh enregistre le reloadcmd, que son cron rejoue à chaque
+    # renouvellement.
+    acme_sh --install-cert -d "$host" --ecc --home "$ACME_HOME" --cert-home "$CERT_HOME" \
+      --reloadcmd "$ACME_RELOADCMD"
     "$INSTALL" -m 644 "$work/vhost.conf" "$NGINX_DIR/partiduo/$slug.conf"
     "$NGINX" -t
     "$SERVICE" nginx reload
@@ -283,21 +329,20 @@ case "$command" in
     [ $# -eq 1 ] || die "usage : remove SLUG"
     slug="$1"
     check_slug "$slug"
-    # Service arrêté puis retiré de chaque liste qui le déclare (le script
-    # rc.d refuse une instance absente de sa liste : l'arrêt d'abord).
-    for rc in partiduo partiduo_devel; do
-      case " $(rc_value "${rc}_instances") " in
-        *" $slug "*)
-          "$SERVICE" "$rc" stop "$slug" || true
-          "$SYSRC" "${rc}_instances-=$slug"
-          ;;
-      esac
-    done
+    # Service arrêté puis retiré de partiduo_instances s'il y figure (le
+    # script rc.d refuse une instance absente de sa liste : l'arrêt d'abord).
+    case " $(rc_value "${RC_NAME}_instances") " in
+      *" $slug "*)
+        "$SERVICE" "$RC_NAME" stop "$slug" || true
+        "$SYSRC" "${RC_NAME}_instances-=$slug"
+        ;;
+    esac
     rm -f "$CRON_DIR/partiduo-$slug" "$NGINX_DIR/partiduo/$slug.conf" "$ETC_DIR/$slug.env"
     # Le vhost retiré, le renouvellement échouerait : acme.sh oublie le
-    # certificat, puis le certificat installé est supprimé.
-    "$ACME_SH" --remove -d "$slug.$DOMAIN" --ecc --home "$ACME_HOME" || true
-    rm -rf "${CERT_DIR:?}/$slug.$DOMAIN"
+    # certificat, puis son répertoire est supprimé de CERT_HOME (acme.sh
+    # --remove n'y touche pas).
+    acme_sh --remove -d "$slug.$DOMAIN" --ecc --home "$ACME_HOME" --cert-home "$CERT_HOME" || true
+    rm -rf "${CERT_HOME:?}/${slug}.${DOMAIN}_ecc"
     "$SERVICE" nginx reload || true
     # Suppression définitive : fichiers de l'instance (pièces jointes
     # comprises) et fichiers produits par partiduo-provision. Les journaux
@@ -309,18 +354,18 @@ case "$command" in
     [ $# -eq 2 ] || die "usage : service SLUG start|stop|status"
     check_slug "$1"
     case "$2" in start | stop | status) ;; *) die "commande refusée" ;; esac
-    package=$(resolve_package "$1" -) || exit 2
+    resolve_package "$1" - >/dev/null || exit 2
     # status : code de sortie de rc.subr (0 si l'instance tourne).
-    exec "$SERVICE" "$(rc_name "$package")" "$2" "$1"
+    exec "$SERVICE" "$RC_NAME" "$2" "$1"
     ;;
 
   cert)
     [ $# -eq 2 ] || die "usage : cert HÔTE exists|enddate"
     check_host "$1"
     case "$2" in
-      exists) exec test -f "$CERT_DIR/$1/fullchain.pem" ;;
+      exists) exec test -f "$(cert_file "$1")" ;;
       # Premier certificat du fullchain : celui de l'instance.
-      enddate) exec "$OPENSSL" x509 -enddate -noout -in "$CERT_DIR/$1/fullchain.pem" ;;
+      enddate) exec "$OPENSSL" x509 -enddate -noout -in "$(cert_file "$1")" ;;
       *) die "commande refusée" ;;
     esac
     ;;

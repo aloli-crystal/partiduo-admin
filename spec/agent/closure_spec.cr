@@ -283,11 +283,13 @@ describe "partiduo-agent : ordre des pièces (D-AFN-006)" do
   end
 end
 
-# Doublures des outils de FreeBSD (sysrc, service, acme.sh, nginx, install
-# sans changement de propriétaire, pg_dump en échec) : rc.conf, appels,
-# services et certificats émis tenus dans $FAKE_ROOT. acme.sh : --issue rend
-# 2 pour un certificat déjà émis (pas de réémission) ; --install-cert écrit
-# un vrai certificat (openssl), pour `cert HÔTE enddate`.
+# Doublures des outils de FreeBSD (sysrc, pkg, service, acme.sh, su, nginx,
+# install sans changement de propriétaire, pg_dump en échec) : rc.conf,
+# paquets installés (fichiers `pkg.<nom>`), appels et services tenus dans
+# $FAKE_ROOT. acme.sh : --issue écrit un vrai certificat (openssl) dans
+# CERT_HOME (`<hôte>_ecc/`, comme le vrai), pour `cert HÔTE enddate`, et rend
+# 2 pour un certificat déjà émis (pas de réémission) ; --install-cert exige
+# le certificat. su : note l'utilisateur, puis confie la commande à sh.
 private HELPER_DOUBLES = {
   "sysrc" => <<-'SH',
     #!/bin/sh
@@ -303,6 +305,7 @@ private HELPER_DOUBLES = {
       *=*) put "${1%%=*}" "${1#*=}" ;;
     esac
     SH
+  "pkg"     => "#!/bin/sh\n[ \"$1 $2 $3\" = \"info -q -e\" ] && test -f \"$FAKE_ROOT/pkg.$4\"\n",
   "service" => <<-SH,
     #!/bin/sh
     echo "service $*" >> "$FAKE_ROOT/calls"
@@ -316,23 +319,29 @@ private HELPER_DOUBLES = {
   "acme.sh" => <<-SH,
     #!/bin/sh
     echo "acme.sh $*" >> "$FAKE_ROOT/calls"
-    action=$1; host=""; fullchain=""; key=""
+    action=$1; host=""; cert_home=""
     while [ $# -gt 0 ]; do
       case $1 in
         -d) host=$2; shift ;;
-        --fullchain-file) fullchain=$2; shift ;;
-        --key-file) key=$2; shift ;;
+        --cert-home) cert_home=$2; shift ;;
       esac
       shift
     done
+    dir="$cert_home/${host}_ecc"
     case $action in
-      --issue) [ -f "$FAKE_ROOT/issued.$host" ] && exit 2; touch "$FAKE_ROOT/issued.$host" ;;
-      --install-cert)
-        [ -f "$FAKE_ROOT/issued.$host" ] || exit 1
-        openssl req -x509 -newkey rsa:2048 -nodes -subj "/CN=$host" -days 90 \
-          -keyout "$key" -out "$fullchain" 2>/dev/null ;;
-      --remove) rm -f "$FAKE_ROOT/issued.$host" ;;
+      --issue)
+        [ -f "$dir/fullchain.cer" ] && exit 2
+        mkdir -p "$dir"
+        openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 -nodes -subj "/CN=$host" -days 90 \
+          -keyout "$dir/$host.key" -out "$dir/fullchain.cer" 2>/dev/null ;;
+      --install-cert) [ -f "$dir/fullchain.cer" ] || exit 1 ;;
     esac
+    SH
+  "su" => <<-SH,
+    #!/bin/sh
+    echo "su $1 $2" >> "$FAKE_ROOT/calls"
+    [ "$1" = -m ] && [ "$3" = -c ] || exit 1
+    exec /bin/sh -c "$4"
     SH
   "nginx"   => "#!/bin/sh\necho \"nginx $*\" >> \"$FAKE_ROOT/calls\"\n",
   "pg_dump" => "#!/bin/sh\necho 'pg_dump: error: connection to server failed' >&2\nexit 1\n",
@@ -352,23 +361,27 @@ private def helper_bench(dir : String) : String
   Dir.mkdir_p(bin)
   HELPER_DOUBLES.each { |name, script| File.write(File.join(bin, name), script, perm: 0o755) }
   root = File.join(dir, "root")
-  {"partiduo", "partiduo-devel"}.each do |package|
-    home = File.join(root, "usr", "local", "lib", package)
-    Dir.mkdir_p(File.join(home, "bin"))
-    Dir.mkdir_p(File.join(home, "deploy", "templates"))
-    File.write(File.join(home, "bin", "partiduo-manage"), "#!/bin/sh\nprintf '%s\\n' \"#{package}\" \"DB=$DATABASE_URL\" \"$@\"\n", perm: 0o755)
-    templates = File.join(home, "deploy", "templates")
-    File.write(File.join(templates, "nginx-acme.conf.tmpl"), "server { server_name {{HOST}}; root {{ACME_WEBROOT}}; }\n")
-    File.write(File.join(templates, "nginx-vhost.conf.tmpl"),
-      "server { server_name {{HOST}}; ssl_certificate /usr/local/etc/ssl/acme/{{HOST}}/fullchain.pem; " \
-      "proxy_pass http://127.0.0.1:{{PORT}}; }\n")
-    File.write(File.join(templates, "partiduo-instance.cron.tmpl"),
-      "{{DAILY_MINUTE}} 3 * * * {{SYSTEM_USER}} . {{ENV_FILE}} && cd {{DATA_DIR}}/{{DOSSIER}} && {{MANAGE_PATH}} {{DAILY_COMMAND}}\n")
-  end
+  # Un seul paquet par serveur (partiduo-app ici), aux mêmes emplacements
+  # pour app et devel.
+  home = File.join(root, "usr", "local", "lib", "partiduo")
+  Dir.mkdir_p(File.join(home, "bin"))
+  Dir.mkdir_p(File.join(home, "deploy", "templates"))
+  File.write(File.join(home, "bin", "partiduo-manage"), "#!/bin/sh\nprintf '%s\\n' \"partiduo\" \"DB=$DATABASE_URL\" \"$@\"\n", perm: 0o755)
+  templates = File.join(home, "deploy", "templates")
+  File.write(File.join(templates, "nginx-acme.conf.tmpl"), "server { server_name {{HOST}}; root {{ACME_WEBROOT}}; }\n")
+  File.write(File.join(templates, "nginx-vhost.conf.tmpl"),
+    "server { server_name {{HOST}}; ssl_certificate /var/db/acme/certs/{{HOST}}_ecc/fullchain.cer; " \
+    "proxy_pass http://127.0.0.1:{{PORT}}; }\n")
+  File.write(File.join(templates, "partiduo-instance.cron.tmpl"),
+    "{{DAILY_MINUTE}} 3 * * * {{SYSTEM_USER}} . {{ENV_FILE}} && cd {{DATA_DIR}}/{{DOSSIER}} && {{MANAGE_PATH}} {{DAILY_COMMAND}}\n")
   Dir.mkdir_p(File.join(root, "usr", "local", "etc", "nginx"))
+  # Recette beryl `acme` appliquée : règle sudo de rechargement de nginx.
+  Dir.mkdir_p(File.join(root, "usr", "local", "etc", "sudoers.d"))
+  File.write(File.join(root, "usr", "local", "etc", "sudoers.d", "acme"), "acme ALL=(root) NOPASSWD: /usr/sbin/service nginx reload\n")
   File.write(File.join(root, "usr", "local", "etc", "nginx", "nginx.conf"), "http {\n  include partiduo/*.conf;\n}\n")
   Dir.mkdir_p(File.join(dir, "backups"))
-  File.write(File.join(dir, "rc.conf"), %(partiduo_devel_instances="demo"\n))
+  File.write(File.join(dir, "pkg.partiduo-app"), "")
+  File.write(File.join(dir, "rc.conf"), %(partiduo_instances="demo"\n))
   conf = File.join(dir, "helpers.conf")
   File.write(conf, <<-CONF)
     DOMAIN=partiduo.test
@@ -380,8 +393,11 @@ private def helper_bench(dir : String) : String
     PG_SOCKET=/tmp
     SYSTEM_ROOT=#{root}
     SYSRC=#{bin}/sysrc
+    PKG=#{bin}/pkg
     SERVICE=#{bin}/service
     ACME_SH=#{bin}/acme.sh
+    SU=#{bin}/su
+    ACME_USER=nobody
     NGINX=#{bin}/nginx
     INSTALL=#{bin}/install
     PG_DUMP=#{bin}/pg_dump
@@ -461,30 +477,47 @@ describe "partiduo-agent : scripts enveloppes de sudo (D-AFN-002)" do
     code.should eq(2)
     errors.should contain("acme.sh absent")
     Dir.exists?(File.join(dir, "etc")).should be_false
+    # Recette `acme` antérieure aux conventions du port (pas de règle sudo
+    # pour l'utilisateur acme) : refus, avant toute écriture.
+    File.write(conf, File.read(conf).sub("ACME_SH=#{dir}/bin/absent", "ACME_SH=#{dir}/bin/acme.sh"))
+    File.delete(File.join(dir, "root", "usr", "local", "etc", "sudoers.d", "acme"))
+    code, _, errors = helper("partiduo-agent-root", conf, ["install", "demo", "-"])
+    code.should eq(2)
+    errors.should contain("sudoers.d/acme absent : appliquez la recette beryl « acme »")
+    Dir.exists?(File.join(dir, "etc")).should be_false
     File.exists?(piege).should be_false
   ensure
     FileUtils.rm_rf(dir) if dir
   end
 
-  it "prennent le paquet déclaré dans rc.conf, refusent un paquet contraire ou une double déclaration" do
+  it "prennent le paquet installé sur le serveur, refusent un paquet absent ou une instance non déclarée" do
     dir = File.join(Dir.tempdir, "partiduo-helpers-#{Random::Secure.hex(4)}")
     conf = helper_bench(dir)
 
     code, output, _ = helper("partiduo-agent-instance", conf, ["cli", "demo", "partiduo_rt_demo_5", "-", "status", "--task", "1"])
     code.should eq(0)
-    output.lines.should eq(["partiduo-devel", "DB=postgres:///partiduo_rt_demo_5?host=/tmp", "instance", "status", "--task", "1"])
-    helper("partiduo-agent-instance", conf, ["cli", "demo", "-", "devel", "version"])[0].should eq(0)
-    code, _, errors = helper("partiduo-agent-instance", conf, ["cli", "demo", "-", "app", "version"])
+    output.lines.should eq(["partiduo", "DB=postgres:///partiduo_rt_demo_5?host=/tmp", "instance", "status", "--task", "1"])
+    helper("partiduo-agent-instance", conf, ["cli", "demo", "-", "app", "version"])[0].should eq(0)
+    code, _, errors = helper("partiduo-agent-instance", conf, ["cli", "demo", "-", "devel", "version"])
     code.should eq(2)
-    errors.should contain("contraire à la déclaration")
+    errors.should contain("paquet devel absent du serveur (paquet installé : app)")
     # Instance pas encore déclarée : le paquet explicite seulement.
     helper("partiduo-agent-instance", conf, ["cli", "neuve", "-", "-", "status"])[2].should contain("non déclarée")
     helper("partiduo-agent-instance", conf, ["cli", "neuve", "-", "app", "status"])[1].lines.first.should eq("partiduo")
 
-    File.write(File.join(dir, "rc.conf"), %(partiduo_instances="demo"\npartiduo_devel_instances="autre demo"\n))
+    # Serveur de test : partiduo-app-devel, aux mêmes emplacements et sous le
+    # même script rc.d.
+    File.delete(File.join(dir, "pkg.partiduo-app"))
+    File.write(File.join(dir, "pkg.partiduo-app-devel"), "")
+    helper("partiduo-agent-instance", conf, ["cli", "demo", "-", "devel", "version"])[1].lines.first.should eq("partiduo")
+    helper("partiduo-agent-instance", conf, ["cli", "neuve", "-", "app", "status"])[2].should contain("paquet app absent du serveur")
+    helper("partiduo-agent-root", conf, ["install", "neuve", "app"])[2].should contain("paquet app absent du serveur")
+
+    # Aucun paquet installé : refus.
+    File.delete(File.join(dir, "pkg.partiduo-app-devel"))
     code, _, errors = helper("partiduo-agent-instance", conf, ["cli", "demo", "-", "-", "status"])
     code.should eq(2)
-    errors.should contain("déclarée dans les deux paquets")
+    errors.should contain("ni partiduo-app ni partiduo-app-devel")
     helper("partiduo-agent-root", conf, ["service", "demo", "status"])[0].should eq(2)
   ensure
     FileUtils.rm_rf(dir) if dir
@@ -500,7 +533,7 @@ describe "partiduo-agent : scripts enveloppes de sudo (D-AFN-002)" do
     errors.should eq("")
     code.should eq(0)
     rc_conf = File.read(File.join(dir, "rc.conf"))
-    rc_conf.should contain(%(partiduo_instances="neuve"))
+    rc_conf.should contain(%(partiduo_instances="demo neuve"))
     rc_conf.should contain(%(partiduo_enable="YES"))
     File.read(File.join(dir, "etc", "neuve.env")).should contain("PARTIDUO_MEDIA_ROOT=#{dir}/data/neuve/media")
     Dir.exists?(File.join(dir, "data", "neuve", "media")).should be_true
@@ -512,18 +545,26 @@ describe "partiduo-agent : scripts enveloppes de sudo (D-AFN-002)" do
     calls = File.read_lines(File.join(dir, "calls"))
     calls.should contain("service partiduo start neuve")
     calls.last.should eq("service nginx reload")
-    # Certificat par acme.sh (conventions du parc beryl) : vhost d'amorçage,
-    # émission, installation avec le rechargement de nginx, vhost définitif.
-    acme_home = "#{root}/usr/local/etc/acme.sh"
-    cert_dir = "#{root}/usr/local/etc/ssl/acme/neuve.partiduo.test"
-    issue = "acme.sh --issue --server letsencrypt -d neuve.partiduo.test -w #{dir}/acme --home #{acme_home} --keylength ec-256"
-    install_cert = "acme.sh --install-cert -d neuve.partiduo.test --ecc --home #{acme_home} " \
-                   "--fullchain-file #{cert_dir}/fullchain.pem --key-file #{cert_dir}/privkey.pem --reloadcmd service nginx reload"
+    # Certificat par acme.sh (conventions du parc beryl et du port FreeBSD) :
+    # vhost d'amorçage, émission sous l'utilisateur d'acme.sh dans CERT_HOME,
+    # enregistrement du rechargement de nginx par sudo, vhost définitif.
+    acme_home = "#{root}/var/db/acme/.acme.sh"
+    cert_home = "#{root}/var/db/acme/certs"
+    cert_dir = "#{cert_home}/neuve.partiduo.test_ecc"
+    issue = "acme.sh --issue --server letsencrypt -d neuve.partiduo.test -w #{dir}/acme --home #{acme_home} " \
+            "--cert-home #{cert_home} --keylength ec-256"
+    install_cert = "acme.sh --install-cert -d neuve.partiduo.test --ecc --home #{acme_home} --cert-home #{cert_home} " \
+                   "--reloadcmd /usr/local/bin/sudo /usr/sbin/service nginx reload"
     calls.should contain(issue)
     calls.should contain(install_cert)
     calls.index!(issue).should be < calls.index!(install_cert)
+    # Jamais en root : chaque appel d'acme.sh passe par su.
+    calls[calls.index!(issue) - 1].should eq("su -m nobody")
+    calls[calls.index!(install_cert) - 1].should eq("su -m nobody")
     calls.none?(&.includes?("--register-account")).should be_true
-    File.read(File.join(root, "usr", "local", "etc", "nginx", "partiduo", "neuve.conf")).should contain("/usr/local/etc/ssl/acme/neuve.partiduo.test/fullchain.pem")
+    calls.none?(&.includes?("--fullchain-file")).should be_true
+    File.exists?(File.join(cert_dir, "fullchain.cer")).should be_true
+    File.read(File.join(root, "usr", "local", "etc", "nginx", "partiduo", "neuve.conf")).should contain("/var/db/acme/certs/neuve.partiduo.test_ecc/fullchain.cer")
     helper("partiduo-agent-root", conf, ["cert", "neuve.partiduo.test", "exists"])[0].should eq(0)
     code, output, _ = helper("partiduo-agent-root", conf, ["cert", "neuve.partiduo.test", "enddate"])
     code.should eq(0)
@@ -532,7 +573,7 @@ describe "partiduo-agent : scripts enveloppes de sudo (D-AFN-002)" do
     # Rejouée : ni doublon dans rc.conf, ni redémarrage, ni réémission
     # (acme.sh --issue rend 2 : certificat encore valide).
     helper("partiduo-agent-root", conf, ["install", "neuve", "-"])[0].should eq(0)
-    File.read(File.join(dir, "rc.conf")).should contain(%(partiduo_instances="neuve"\n))
+    File.read(File.join(dir, "rc.conf")).should contain(%(partiduo_instances="demo neuve"\n))
     calls = File.read_lines(File.join(dir, "calls"))
     calls.count("service partiduo start neuve").should eq(1)
     calls.count(issue).should eq(2)
@@ -548,7 +589,7 @@ describe "partiduo-agent : scripts enveloppes de sudo (D-AFN-002)" do
      File.join(dir, "etc", "neuve.env"), File.join(dir, "data", "neuve"), File.join(dir, "stage", "neuve")].each do |path|
       File.exists?(path).should be_false
     end
-    File.read_lines(File.join(dir, "calls")).should contain("acme.sh --remove -d neuve.partiduo.test --ecc --home #{acme_home}")
+    File.read_lines(File.join(dir, "calls")).should contain("acme.sh --remove -d neuve.partiduo.test --ecc --home #{acme_home} --cert-home #{cert_home}")
     Dir.exists?(cert_dir).should be_false
     helper("partiduo-agent-root", conf, ["cert", "neuve.partiduo.test", "exists"])[0].should_not eq(0)
   ensure
@@ -562,7 +603,7 @@ describe "partiduo-agent : scripts enveloppes de sudo (D-AFN-002)" do
     instance_env(dir, "essai", 8170)
     helper("partiduo-agent-root", conf, ["install", "essai", "app"])[0].should eq(0)
     calls = File.read_lines(File.join(dir, "calls"))
-    acme_home = "#{dir}/root/usr/local/etc/acme.sh"
+    acme_home = "#{dir}/root/var/db/acme/.acme.sh"
     register = "acme.sh --register-account -m ops@partiduo.test --server letsencrypt_test --home #{acme_home}"
     calls.should contain(register)
     issue = calls.index!(&.starts_with?("acme.sh --issue --server letsencrypt_test -d essai.partiduo.test "))
@@ -574,7 +615,7 @@ describe "partiduo-agent : scripts enveloppes de sudo (D-AFN-002)" do
     instance_env(dir, "rate", 8171)
     code, _, errors = helper("partiduo-agent-root", conf, ["install", "rate", "app"])
     code.should eq(2)
-    errors.should contain("acme.sh --issue : échec (code 1)")
+    errors.should contain("acme.sh --issue : échec (code 1, journal /var/log/acme.sh.log)")
     File.read_lines(File.join(dir, "calls")).none?(&.starts_with?("acme.sh --install-cert -d rate.")).should be_true
     File.read(File.join(dir, "root", "usr", "local", "etc", "nginx", "partiduo", "rate.conf")).should_not contain("ssl_certificate")
   ensure
