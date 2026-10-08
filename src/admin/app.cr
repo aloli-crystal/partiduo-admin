@@ -30,7 +30,15 @@ require "./handlers/approval_mode_handlers"
 require "./handlers/agent_api"
 
 module PartiduoAdmin
-  VERSION = "0.1.0"
+  # Lue à la compilation dans `shard.yml`, seule source du numéro : chaque
+  # commit y incrémente le dernier chiffre.
+  VERSION = {{
+              (read_file("#{__DIR__}/../../shard.yml")
+                .lines
+                .find(&.starts_with?("version:")) || "version: 0.0.0")
+                .gsub(/^version:\s*/, "")
+                .chomp
+            }}
 
   # Application Marten de l'administration du parc (ADR-008) : modèles,
   # gabarits (`templates/admin/`), fichiers statiques (`assets/admin/`),
